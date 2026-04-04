@@ -21,7 +21,7 @@ export default function StoryCreateScreen() {
       
       <View className="flex-1 justify-center items-center px-10">
         <View className="bg-gray-900 p-8 rounded-full mb-8">
-          <CameraIcon className="w-12 h-12" color="#3b82f6" />
+          <CameraIcon color="#3b82f6" size={48} />
         </View>
         <Text className="text-white text-2xl font-bold mb-4 text-center">
           Share Your Story

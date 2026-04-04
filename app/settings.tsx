@@ -66,7 +66,7 @@ export default function SettingsScreen() {
             onPress={handleLogout}
             className="flex-row items-center justify-center bg-red-950/20 border border-red-900/50 rounded-2xl py-4 mt-12"
           >
-            <LogoutIcon color="#ef4444" className="mr-3" />
+            <LogoutIcon color="#ef4444" size={22} />
             <Text className="text-red-500 font-bold text-lg">Log Out</Text>
           </Pressable>
 
