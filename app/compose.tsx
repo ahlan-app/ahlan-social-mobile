@@ -1,101 +1,271 @@
-import React, { useState } from 'react';
-import { 
-  View, 
-  Text, 
-  TextInput, 
-  Pressable, 
-  KeyboardAvoidingView, 
+import React, { useState, useRef } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  Pressable,
+  KeyboardAvoidingView,
   Platform,
-  ActivityIndicator
+  ActivityIndicator,
+  ScrollView,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { Stack, useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Image } from 'expo-image';
 import { useApp } from '../store/AppContext.native';
+import { cleanHtml } from '../services/apiService';
 import UserAvatar from '../components/native/UserAvatar';
+import { PollIcon, XIcon } from '../components/native/Icons';
+import type { Post } from '../types';
+
+const MAX_CHARS = 280;
 
 export default function ComposeScreen() {
-  const [content, setContent] = useState('');
-  const [loading, setLoading] = useState(false);
-  const { userProfile, addProfilePost } = useApp();
+  const { mediaUri, mediaType: paramMediaType } = useLocalSearchParams<{
+    mediaUri?: string;
+    mediaType?: string;
+  }>();
   const router = useRouter();
+  const { userProfile, addProfilePost, addToast } = useApp();
+  const inputRef = useRef<TextInput>(null);
+
+  const [content, setContent] = useState('');
+  const [isPosting, setIsPosting] = useState(false);
+  const [isCreatingPoll, setIsCreatingPoll] = useState(false);
+  const [pollQuestion, setPollQuestion] = useState('');
+  const [pollOptions, setPollOptions] = useState(['', '']);
+
+  const charCount = content.length;
+  const canPost =
+    (content.trim().length > 0 || mediaUri) &&
+    !isPosting &&
+    charCount <= MAX_CHARS &&
+    (!isCreatingPoll || (pollQuestion.trim() && pollOptions.filter(o => o.trim()).length >= 2));
 
   const handlePost = async () => {
-    if (!content.trim()) return;
+    if (!canPost || !userProfile) return;
+    setIsPosting(true);
 
-    setLoading(true);
     try {
-      // Logic to actually publish via API would go here.
-      // For now we use the hook as requested.
-      const newPost = {
-        id: Math.random().toString(36).substring(7),
-        content,
-        user_id: userProfile?.id,
-        created_at: new Date().toISOString(),
-        author: {
-          username: userProfile?.username,
-          full_name: userProfile?.name,
-          avatar_url: userProfile?.profilePicture,
-        }
+      const cleanContent = cleanHtml(content.trim());
+
+      const newPost: Post = {
+        id: `temp-${Date.now()}`,
+        content: cleanContent,
+        username: userProfile.username,
+        name: userProfile.name || userProfile.username,
+        avatar: userProfile.profilePicture || null,
+        timestamp: new Date().toISOString(),
+        media: mediaUri || undefined,
+        media_type: mediaUri ? 'image' : 'text',
+        likes: 0,
+        reposts: 0,
+        replies: 0,
+        isVerified: userProfile.isVerified || false,
+        poll: isCreatingPoll
+          ? {
+              question: pollQuestion.trim(),
+              options: pollOptions
+                .filter(o => o.trim())
+                .map(o => ({ text: o.trim(), votes: 0 })),
+            }
+          : undefined,
       };
-      
-      // @ts-ignore
+
       addProfilePost(newPost);
       router.back();
     } catch (error) {
-      console.error(error);
+      console.error('Failed to publish post', error);
+      addToast('Failed to create post.', 'error');
     } finally {
-      setLoading(false);
+      setIsPosting(false);
     }
   };
 
+  const addPollOption = () => {
+    if (pollOptions.length < 4) {
+      setPollOptions([...pollOptions, '']);
+    }
+  };
+
+  const removePollOption = (index: number) => {
+    if (pollOptions.length > 2) {
+      setPollOptions(pollOptions.filter((_, i) => i !== index));
+    }
+  };
+
+  const updatePollOption = (index: number, value: string) => {
+    const updated = [...pollOptions];
+    updated[index] = value;
+    setPollOptions(updated);
+  };
+
+  const charProgress = Math.min(charCount / MAX_CHARS, 1);
+  const isNearLimit = charCount > MAX_CHARS * 0.8;
+  const isOverLimit = charCount > MAX_CHARS;
+
   return (
     <SafeAreaView className="flex-1 bg-black">
+      <Stack.Screen options={{ headerShown: false, presentation: 'modal' }} />
+
+      {/* Header */}
       <View className="px-4 py-3 flex-row justify-between items-center border-b border-gray-900">
         <Pressable onPress={() => router.back()}>
           <Text className="text-white text-base">Cancel</Text>
         </Pressable>
-        <Pressable 
-          onPress={handlePost} 
-          disabled={!content.trim() || loading}
-          className={`px-6 py-1.5 rounded-full ${!content.trim() || loading ? 'bg-blue-500/50' : 'bg-blue-500'}`}
+        <Pressable
+          onPress={handlePost}
+          disabled={!canPost}
+          className={`px-6 py-1.5 rounded-full ${canPost ? 'bg-blue-500' : 'bg-blue-500/40'}`}
         >
-          {loading ? (
+          {isPosting ? (
             <ActivityIndicator size="small" color="white" />
           ) : (
-            <Text className="text-white font-bold">Post</Text>
+            <Text className={`font-bold ${canPost ? 'text-white' : 'text-white/60'}`}>
+              Share
+            </Text>
           )}
         </Pressable>
       </View>
 
-      <KeyboardAvoidingView 
+      <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         className="flex-1"
       >
-        <View className="flex-1 p-4 flex-row">
-          <UserAvatar 
-            username={userProfile?.username || ''} 
-            avatarUrl={userProfile?.profilePicture} 
-            size={45} 
-          />
-          <View className="flex-1 ml-3">
-            <TextInput
-              multiline
-              autoFocus
-              className="text-white text-lg mt-1"
-              placeholder="What's happening?"
-              placeholderTextColor="#6b7280"
-              maxLength={500}
-              value={content}
-              onChangeText={setContent}
-              style={{ textAlignVertical: 'top' }}
+        <ScrollView className="flex-1" keyboardShouldPersistTaps="handled">
+          {/* Compose area */}
+          <View className="p-4 flex-row" style={{ gap: 12 }}>
+            <UserAvatar
+              username={userProfile?.username || ''}
+              avatarUrl={userProfile?.profilePicture}
+              size={45}
             />
+            <View className="flex-1">
+              <TextInput
+                ref={inputRef}
+                multiline
+                autoFocus
+                className="text-white text-lg"
+                placeholder="What's happening?"
+                placeholderTextColor="#6b7280"
+                value={content}
+                onChangeText={setContent}
+                style={{ textAlignVertical: 'top', minHeight: 100 }}
+              />
+            </View>
           </View>
-        </View>
-        
-        <View className="px-4 py-2 border-t border-gray-900 flex-row justify-end">
-          <Text className={`${content.length > 480 ? 'text-red-500' : 'text-gray-600'} text-xs`}>
-            {content.length}/500
-          </Text>
+
+          {/* Media preview */}
+          {mediaUri && (
+            <View className="px-4 pb-4">
+              <View className="rounded-2xl overflow-hidden">
+                <Image
+                  source={{ uri: mediaUri }}
+                  style={{ width: '100%', aspectRatio: 1 }}
+                  contentFit="cover"
+                />
+              </View>
+            </View>
+          )}
+
+          {/* Poll section */}
+          {isCreatingPoll && (
+            <View className="mx-4 mb-4 border border-gray-800 rounded-2xl p-4">
+              <View className="flex-row justify-between items-center mb-3">
+                <Text className="text-white font-bold text-base">Poll</Text>
+                <Pressable onPress={() => setIsCreatingPoll(false)}>
+                  <XIcon color="#6b7280" size={20} />
+                </Pressable>
+              </View>
+
+              <TextInput
+                value={pollQuestion}
+                onChangeText={setPollQuestion}
+                placeholder="Ask a question..."
+                placeholderTextColor="#6b7280"
+                className="text-white text-base border-b border-gray-800 pb-3 mb-3"
+              />
+
+              {pollOptions.map((option, index) => (
+                <View key={index} className="flex-row items-center mb-2" style={{ gap: 8 }}>
+                  <TextInput
+                    value={option}
+                    onChangeText={(val) => updatePollOption(index, val)}
+                    placeholder={`Option ${index + 1}`}
+                    placeholderTextColor="#6b7280"
+                    className="flex-1 text-white bg-gray-800 rounded-xl px-4 py-2.5"
+                  />
+                  {pollOptions.length > 2 && (
+                    <Pressable onPress={() => removePollOption(index)}>
+                      <XIcon color="#6b7280" size={18} />
+                    </Pressable>
+                  )}
+                </View>
+              ))}
+
+              {pollOptions.length < 4 && (
+                <Pressable onPress={addPollOption} className="mt-2">
+                  <Text className="text-blue-500 font-semibold">+ Add option</Text>
+                </Pressable>
+              )}
+            </View>
+          )}
+        </ScrollView>
+
+        {/* Toolbar */}
+        <View className="border-t border-gray-900 px-4 py-2 flex-row items-center justify-between">
+          <View className="flex-row items-center" style={{ gap: 16 }}>
+            {!mediaUri && (
+              <Pressable
+                onPress={() => setIsCreatingPoll(!isCreatingPoll)}
+                className="p-2"
+              >
+                <PollIcon color={isCreatingPoll ? '#3b82f6' : '#6b7280'} size={22} />
+              </Pressable>
+            )}
+          </View>
+
+          {/* Character counter */}
+          {charCount > 0 && (
+            <View className="flex-row items-center" style={{ gap: 8 }}>
+              <Text
+                className={`text-sm ${
+                  isOverLimit
+                    ? 'text-red-500'
+                    : isNearLimit
+                    ? 'text-yellow-500'
+                    : 'text-gray-500'
+                }`}
+              >
+                {MAX_CHARS - charCount}
+              </Text>
+              {/* Simple progress indicator */}
+              <View
+                className="w-6 h-6 rounded-full border-2"
+                style={{
+                  borderColor: isOverLimit
+                    ? '#ef4444'
+                    : isNearLimit
+                    ? '#eab308'
+                    : '#3b82f6',
+                }}
+              >
+                <View
+                  className="rounded-full"
+                  style={{
+                    width: `${charProgress * 100}%`,
+                    height: '100%',
+                    backgroundColor: isOverLimit
+                      ? '#ef4444'
+                      : isNearLimit
+                      ? '#eab308'
+                      : '#3b82f6',
+                    borderRadius: 999,
+                  }}
+                />
+              </View>
+            </View>
+          )}
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>

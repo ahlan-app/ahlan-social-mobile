@@ -247,6 +247,12 @@ export const ReportIcon: React.FC<IconProps> = ({ color = "#fff", size = 24 }) =
   </Svg>
 );
 
+export const SendIcon: React.FC<IconProps> = ({ color = "#fff", size = 24 }) => (
+  <Svg width={size} height={size} fill="none" stroke={color} strokeWidth="1.5" viewBox="0 0 24 24">
+    <Path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+  </Svg>
+);
+
 export const StarIcon: React.FC<IconProps> = ({ color = "#fff", size = 24 }) => (
   <Svg width={size} height={size} fill={color} strokeWidth="0" viewBox="0 0 24 24">
     <Path fillRule="evenodd" d="M10.788 3.21c.448-1.077 1.976-1.077 2.424 0l2.082 5.007 5.404.433c1.164.093 1.636 1.545.749 2.305l-4.116 3.986 1.24 5.383c.236 1.024-.908 1.857-1.846 1.334l-4.706-2.917-4.706 2.917c-.938.523-2.082-.31-1.846-1.334l1.24-5.383-4.116-3.986c-.887-.76-.415-2.212.749-2.305l5.404-.433 2.082-5.007z" clipRule="evenodd" />

@@ -129,8 +129,7 @@ export default function HomeFeedScreen() {
   }, []);
 
   const handleViewStories = useCallback((stories: Story[], startIndex: number) => {
-    // Store stories in a global ref or pass via params
-    router.push('/story-viewer');
+    router.push({ pathname: '/story-viewer', params: { index: String(startIndex) } });
   }, []);
 
   const handleAddStory = useCallback(() => {

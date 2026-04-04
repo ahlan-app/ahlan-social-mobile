@@ -110,7 +110,7 @@ export const publishPost = async (post: Post): Promise<Post | null> => {
 
         // --- NEW UPLOAD LOGIC ---
         // If the media is a local URL (from camera or gallery), upload it to storage first.
-        if (uploadUrl && (uploadUrl.startsWith('blob:') || uploadUrl.startsWith('data:'))) {
+        if (uploadUrl && (uploadUrl.startsWith('blob:') || uploadUrl.startsWith('data:') || uploadUrl.startsWith('file://'))) {
             const blob = await localUrlToBlob(uploadUrl);
             // Determine file extension, default to 'bin' if type is not available
             const fileExtension = blob.type.split('/')[1] || 'bin'; 
@@ -947,7 +947,7 @@ export const getStoryById = async (storyId: string): Promise<Story | null> => {
     return null;
 };
 
-export const uploadStory = async (file: File, caption: string | null, userId: string): Promise<Story | null> => {
+export const uploadStory = async (file: File | Blob, caption: string | null, userId: string): Promise<Story | null> => {
     const filePath = `stories/${userId}/${Date.now()}`;
     const { error: uploadError } = await supabase.storage.from('post-media').upload(filePath, file);
     if (uploadError) throw uploadError;
