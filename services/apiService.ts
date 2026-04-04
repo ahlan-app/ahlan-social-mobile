@@ -1195,7 +1195,7 @@ export const updateUserProfileData = async (updates: Partial<Pick<UserProfile, '
     return !error;
 };
 
-export const uploadAvatar = async (file: File): Promise<string | null> => {
+export const uploadAvatar = async (file: File | Blob): Promise<string | null> => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return null;
 
@@ -1228,6 +1228,36 @@ export const getFollowingList = async (userId: string): Promise<string[]> => {
     const { data, error } = await supabase.from('follows').select('profiles!followed_id(username)').eq('follower_id', userId);
     if (error) return [];
     return (data || []).map((item: any) => item.profiles.username);
+};
+
+export const getFollowerUsers = async (userId: string): Promise<SimpleUser[]> => {
+    const { data, error } = await supabase
+        .from('follows')
+        .select('profiles!follower_id(id, username, full_name, avatar_url, is_verified)')
+        .eq('followed_id', userId);
+    if (error || !data) return [];
+    return data.map((item: any) => ({
+        id: item.profiles.id,
+        username: item.profiles.username,
+        name: item.profiles.full_name || item.profiles.username,
+        avatar: item.profiles.avatar_url,
+        isVerified: item.profiles.is_verified || false,
+    }));
+};
+
+export const getFollowingUsers = async (userId: string): Promise<SimpleUser[]> => {
+    const { data, error } = await supabase
+        .from('follows')
+        .select('profiles!followed_id(id, username, full_name, avatar_url, is_verified)')
+        .eq('follower_id', userId);
+    if (error || !data) return [];
+    return data.map((item: any) => ({
+        id: item.profiles.id,
+        username: item.profiles.username,
+        name: item.profiles.full_name || item.profiles.username,
+        avatar: item.profiles.avatar_url,
+        isVerified: item.profiles.is_verified || false,
+    }));
 };
 
 export const followUser = async (follower_id: string, followed_id: string): Promise<void> => {

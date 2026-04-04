@@ -185,14 +185,20 @@ export default function ProfileScreen() {
               <Text className="text-white font-bold text-lg">{posts.length}</Text>
               <Text className="text-gray-500 text-sm">Posts</Text>
             </View>
-            <View className="items-center">
+            <Pressable
+              onPress={() => router.push({ pathname: '/user-list', params: { type: 'followers', userId: userProfile.id, title: 'Followers' } })}
+              className="items-center"
+            >
               <Text className="text-white font-bold text-lg">{followerCount}</Text>
               <Text className="text-gray-500 text-sm">Followers</Text>
-            </View>
-            <View className="items-center">
+            </Pressable>
+            <Pressable
+              onPress={() => router.push({ pathname: '/user-list', params: { type: 'following', userId: userProfile.id, title: 'Following' } })}
+              className="items-center"
+            >
               <Text className="text-white font-bold text-lg">{followingCount}</Text>
               <Text className="text-gray-500 text-sm">Following</Text>
-            </View>
+            </Pressable>
           </View>
         </View>
 

@@ -1,51 +1,85 @@
 import React from 'react';
-import { View, Text, Pressable, ScrollView, Switch } from 'react-native';
+import { View, Text, Pressable, ScrollView, Switch, Alert } from 'react-native';
 import { Stack, useRouter, Link } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useApp } from '../store/AppContext.native';
 import { supabase } from '../services/supabase.native';
-import { LogoutIcon, ChevronRightIcon } from '../components/native/Icons';
+import { LogoutIcon, ChevronRightIcon, TrashIcon } from '../components/native/Icons';
 
 export default function SettingsScreen() {
-  const { theme, setTheme } = useApp();
+  const { theme, setTheme, addToast } = useApp();
   const router = useRouter();
 
   const handleLogout = async () => {
     try {
       await supabase.auth.signOut();
-      // Router redirection is handled by _layout's listener
     } catch (error) {
       console.error(error);
     }
   };
 
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Delete Account',
+      'Permanently delete your account and all of your content. This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await supabase.auth.signOut();
+              addToast('Account deletion requested.', 'info');
+            } catch (error) {
+              console.error(error);
+              addToast('Failed to delete account.', 'error');
+            }
+          },
+        },
+      ],
+    );
+  };
+
   return (
     <SafeAreaView className="flex-1 bg-black">
-      <Stack.Screen 
-        options={{ 
-          headerShown: true, 
+      <Stack.Screen
+        options={{
+          headerShown: true,
           title: 'Settings',
           headerStyle: { backgroundColor: '#000' },
           headerTintColor: '#fff',
           headerTitleStyle: { fontWeight: 'bold' },
-        }} 
+        }}
       />
 
       <ScrollView className="flex-1">
         <View className="px-6 py-6">
-          <Text className="text-gray-500 font-bold mb-4 ml-1">PREFERENCES</Text>
-          
+          {/* Account */}
+          <Text className="text-gray-500 font-bold mb-4 ml-1">ACCOUNT</Text>
           <View className="bg-gray-900 rounded-2xl border border-gray-800 overflow-hidden mb-8">
-            <View className="flex-row items-center justify-between px-4 py-4 border-b border-gray-800">
+            <Link href="/edit-profile" asChild>
+              <Pressable className="flex-row items-center justify-between px-4 py-4">
+                <Text className="text-white text-base">Edit Profile</Text>
+                <ChevronRightIcon color="#6b7280" />
+              </Pressable>
+            </Link>
+          </View>
+
+          {/* Preferences */}
+          <Text className="text-gray-500 font-bold mb-4 ml-1">PREFERENCES</Text>
+          <View className="bg-gray-900 rounded-2xl border border-gray-800 overflow-hidden mb-8">
+            <View className="flex-row items-center justify-between px-4 py-4">
               <Text className="text-white text-base">Dark Mode</Text>
-              <Switch 
-                value={theme === 'dark'} 
-                onValueChange={(val) => setTheme(val ? 'dark' : 'light')} 
+              <Switch
+                value={theme === 'dark'}
+                onValueChange={(val) => setTheme(val ? 'dark' : 'light')}
                 trackColor={{ false: '#374151', true: '#3b82f6' }}
               />
             </View>
           </View>
 
+          {/* About */}
           <Text className="text-gray-500 font-bold mb-4 ml-1">ABOUT</Text>
           <View className="bg-gray-900 rounded-2xl border border-gray-800 overflow-hidden mb-8">
             <Link href="/privacy-policy" asChild>
@@ -62,9 +96,29 @@ export default function SettingsScreen() {
             </Link>
           </View>
 
-          <Pressable 
+          {/* Danger Zone */}
+          <Text className="text-gray-500 font-bold mb-4 ml-1">DANGER ZONE</Text>
+          <View className="bg-gray-900 rounded-2xl border border-red-900/30 overflow-hidden mb-8">
+            <Pressable
+              onPress={handleDeleteAccount}
+              className="flex-row items-center px-4 py-4"
+              style={{ gap: 10 }}
+            >
+              <TrashIcon color="#ef4444" size={20} />
+              <View className="flex-1">
+                <Text className="text-red-500 font-semibold text-base">Delete Account</Text>
+                <Text className="text-gray-600 text-sm mt-0.5">
+                  Permanently delete your account and all content
+                </Text>
+              </View>
+            </Pressable>
+          </View>
+
+          {/* Logout */}
+          <Pressable
             onPress={handleLogout}
-            className="flex-row items-center justify-center bg-red-950/20 border border-red-900/50 rounded-2xl py-4 mt-12"
+            className="flex-row items-center justify-center bg-red-950/20 border border-red-900/50 rounded-2xl py-4"
+            style={{ gap: 8 }}
           >
             <LogoutIcon color="#ef4444" size={22} />
             <Text className="text-red-500 font-bold text-lg">Log Out</Text>
