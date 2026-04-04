@@ -33,6 +33,23 @@
         "CAMERA",
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "ahlan"
+            },
+            {
+              "scheme": "https",
+              "host": "ahlan.social",
+              "pathPrefix": "/"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
       ]
     },
     "plugins": [
@@ -51,7 +68,14 @@
           "photosPermission": "Allow Ahlan to access your photos to share images."
         }
       ],
-      "expo-media-library"
+      "expo-media-library",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#3b82f6"
+        }
+      ]
     ]
   }
 }

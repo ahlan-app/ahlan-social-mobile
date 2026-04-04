@@ -1,17 +1,24 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { 
-  useFonts, 
-  DancingScript_700Bold 
+import {
+  useFonts,
+  DancingScript_700Bold
 } from '@expo-google-fonts/dancing-script';
 import { Anton_400Regular } from '@expo-google-fonts/anton';
 import { Fredoka_500Medium } from '@expo-google-fonts/fredoka';
 import * as SplashScreen from 'expo-splash-screen';
+import * as Notifications from 'expo-notifications';
 import { AppProvider, useApp } from '../store/AppContext.native';
 import { supabase } from '../services/supabase.native';
+import {
+  registerForPushNotifications,
+  savePushToken,
+  addNotificationResponseListener,
+  setBadgeCount,
+} from '../services/notifications';
 
 // Keep the splash screen visible while we fetch resources
 SplashScreen.preventAutoHideAsync();
@@ -20,6 +27,7 @@ function RootLayoutNav() {
   const { userProfile, theme } = useApp();
   const segments = useSegments();
   const router = useRouter();
+  const notificationResponseListener = useRef<Notifications.EventSubscription | null>(null);
 
   const [fontsLoaded, fontError] = useFonts({
     DancingScript_700Bold,
@@ -33,16 +41,15 @@ function RootLayoutNav() {
     }
   }, [fontsLoaded, fontError]);
 
+  // Auth routing
   useEffect(() => {
     const checkAuth = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       const inAuthGroup = segments[0] === '(auth)';
 
       if (!session && !inAuthGroup) {
-        // Redirect to the login page if the user is not signed in
         router.replace('/(auth)/login');
       } else if (session && inAuthGroup) {
-        // Redirect to the tabs page if the user is signed in
         router.replace('/(tabs)');
       }
     };
@@ -51,7 +58,6 @@ function RootLayoutNav() {
       checkAuth();
     }
 
-    // Auth state listener
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN') {
         router.replace('/(tabs)');
@@ -64,6 +70,42 @@ function RootLayoutNav() {
       subscription.unsubscribe();
     };
   }, [fontsLoaded, segments]);
+
+  // Push notifications registration
+  useEffect(() => {
+    if (!userProfile?.id) return;
+
+    registerForPushNotifications().then(async (token) => {
+      if (token) {
+        await savePushToken(userProfile.id, token);
+      }
+    });
+
+    // Clear badge on app open
+    setBadgeCount(0);
+  }, [userProfile?.id]);
+
+  // Notification tap handler — route to relevant screen
+  useEffect(() => {
+    notificationResponseListener.current = addNotificationResponseListener((response) => {
+      const data = response.notification.request.content.data as Record<string, string> | undefined;
+      if (!data) return;
+
+      if (data.type === 'follow' && data.username) {
+        router.push(`/user/${data.username}`);
+      } else if (data.type === 'message' && data.conversationId) {
+        router.push('/messages');
+      } else if (data.postId) {
+        router.push(`/post/${data.postId}`);
+      } else {
+        router.push('/notifications');
+      }
+    });
+
+    return () => {
+      notificationResponseListener.current?.remove();
+    };
+  }, []);
 
   if (!fontsLoaded && !fontError) {
     return null;
