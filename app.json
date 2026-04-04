@@ -1,0 +1,57 @@
+{
+  "expo": {
+    "name": "Ahlan Social",
+    "slug": "ahlan-social",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "ahlan",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.ahlan.social",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Ahlan needs camera access to take photos and stories.",
+        "NSPhotoLibraryUsageDescription": "Ahlan needs photo library access to share images.",
+        "NSPhotoLibraryAddUsageDescription": "Ahlan needs permission to save photos to your library."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#000000"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.ahlan.social",
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Ahlan to access your camera to take photos and stories."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Ahlan to access your photos to share images."
+        }
+      ],
+      "expo-media-library"
+    ]
+  }
+}
