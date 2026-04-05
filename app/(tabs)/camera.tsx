@@ -48,7 +48,10 @@ export default function CameraScreen() {
     try {
       const response = await fetch(uri);
       const blob = await response.blob();
-      const realStory = await uploadStory(blob, null, userProfile.id);
+      const uploadBlob = blob.type
+        ? blob
+        : new Blob([blob], { type: 'image/jpeg' });
+      const realStory = await uploadStory(uploadBlob, null, userProfile.id);
       if (realStory) {
         replaceStory(localId, realStory);
         addToast('Story shared!', 'success');

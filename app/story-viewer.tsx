@@ -41,7 +41,7 @@ const GRADIENT_COLORS = [
 
 export default function StoryViewerScreen() {
   const router = useRouter();
-  const { index: startIndexParam } = useLocalSearchParams<{ index?: string }>();
+  const { index: startIndexParam, storyId: startStoryIdParam } = useLocalSearchParams<{ index?: string; storyId?: string }>();
   const {
     userProfile,
     isStoryLiked,
@@ -71,6 +71,17 @@ export default function StoryViewerScreen() {
   const isOwnStory = currentStory?.userId === userProfile?.id;
   const liked = currentStory ? isStoryLiked(currentStory.id) : false;
 
+  const dedupeStories = useCallback((input: Story[]) => {
+    const seen = new Set<string>();
+    const unique: Story[] = [];
+    for (const story of input) {
+      if (!story?.id || seen.has(story.id)) continue;
+      seen.add(story.id);
+      unique.push(story);
+    }
+    return unique;
+  }, []);
+
   // Load stories
   useEffect(() => {
     const load = async () => {
@@ -80,12 +91,18 @@ export default function StoryViewerScreen() {
           userProfile?.id ? getMyStories(userProfile.id) : Promise.resolve([]),
         ]);
 
-        const filtered = allStories.filter(s => !isUserBlocked(s.username));
-        const combined = [...myStories, ...filtered];
+        const merged = dedupeStories([...myStories, ...allStories]);
+        const combined = merged.filter(s => !isUserBlocked(s.username));
         setStories(combined);
 
-        const startIdx = parseInt(startIndexParam || '0', 10);
-        setCurrentIndex(Math.min(startIdx, Math.max(0, combined.length - 1)));
+        let startIdx = parseInt(startIndexParam || '0', 10);
+        if (startStoryIdParam) {
+          const byIdIndex = combined.findIndex(story => story.id === startStoryIdParam);
+          if (byIdIndex >= 0) {
+            startIdx = byIdIndex;
+          }
+        }
+        setCurrentIndex(Math.min(Math.max(startIdx, 0), Math.max(0, combined.length - 1)));
       } catch (error) {
         console.error('Failed to load stories', error);
       } finally {
@@ -93,7 +110,7 @@ export default function StoryViewerScreen() {
       }
     };
     load();
-  }, [userProfile?.id, isUserBlocked, startIndexParam]);
+  }, [userProfile?.id, isUserBlocked, startIndexParam, startStoryIdParam, dedupeStories]);
 
   // Mark as viewing
   useEffect(() => {

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, ReactNode, useCallback, useMemo, useEffect } from 'react';
 import type { User } from '@supabase/supabase-js';
-import { publishPost, deletePost, updatePost, toggleLike as apiToggleLike, toggleRepost as apiToggleRepost, addComment as apiAddComment, getFollowingList, unfollowUser, followUser, markNotificationsAsRead, getMyStories, deleteStoryFromDatabase, toggleStoryLikeInDatabase, markMessagesAsRead as apiMarkMessagesAsRead, toggleSavePost as apiToggleSavePost, adminDeletePost } from '../services/apiService';
+import { publishPost, deletePost, updatePost, toggleLike as apiToggleLike, toggleRepost as apiToggleRepost, addComment as apiAddComment, getFollowingList, unfollowUser, followUser, markNotificationsAsRead, getMyStories, deleteStoryFromDatabase, toggleStoryLikeInDatabase, markMessagesAsRead as apiMarkMessagesAsRead, toggleSavePost as apiToggleSavePost, adminDeletePost, ensureCurrentUserProfile } from '../services/apiService';
 import { supabase } from '../services/supabase.native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
@@ -264,13 +264,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const syncUserData = useCallback(async (user: User) => {
         try {
+            await ensureCurrentUserProfile();
+
             // Use Promise.all to fetch profile, likes, reposts, follows, and stories concurrently for better performance.
             const [profileResult, likesResult, repostsResult, savedPostsResult, followingResult, myStoriesResult, storyLikesResult, unreadMessagesResult] = await Promise.all([
                 supabase
                     .from('profiles')
                     .select('full_name, username, avatar_url, is_verified, bio')
                     .eq('id', user.id)
-                    .single(),
+                    .maybeSingle(),
                 supabase.from('likes').select('post_id').eq('user_id', user.id),
                 supabase.from('reposts').select('post_id').eq('user_id', user.id),
                 supabase.from('saved_posts').select('post_id').eq('user_id', user.id),
@@ -319,7 +321,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                     ? new Set(savedPostsData.map(s => s.post_id))
                     : prevState.savedPosts;
 
-                const newFollowedUsernames = new Set(followingUsernames);
+                const newFollowedUsernames = new Set(
+                    (followingUsernames || []).map((username) => username.toLowerCase())
+                );
 
                 const newLikedStoryIds = (storyLikesData && Array.isArray(storyLikesData))
                     ? new Set(storyLikesData.map(l => l.story_id))
@@ -514,6 +518,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const tempId = `temp-comment-${Date.now()}`;
         const optimisticComment: Comment = {
             id: tempId,
+            userId: user.id,
             username: state.userProfile.username,
             avatar: state.userProfile.profilePicture,
             text: content,
@@ -537,6 +542,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
             const realComment: Comment = {
                 id: newCommentData.id,
+                userId: newCommentData.user_id,
                 username: newCommentData.profiles.username,
                 avatar: newCommentData.profiles.avatar_url,
                 text: newCommentData.content,
@@ -836,12 +842,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             return;
         }
 
-        if (user.user_metadata.username === username) return;
+        const normalizedUsername = username.trim().toLowerCase();
+        if (!normalizedUsername) return;
 
         const { data: targetUserData, error: targetUserError } = await supabase
             .from('profiles')
             .select('id')
-            .eq('username', username)
+            .ilike('username', normalizedUsername)
             .single();
 
         if (targetUserError || !targetUserData) {
@@ -849,16 +856,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             return;
         }
         const targetUserId = targetUserData.id;
+        if (targetUserId === user.id) return;
 
-        const alreadyFollowing = state.followedUsernames.has(username);
+        const alreadyFollowing = state.followedUsernames.has(normalizedUsername);
 
         // Optimistic update
         setState((prevState: AppState) => {
             const newFollowed = new Set(prevState.followedUsernames);
             if (alreadyFollowing) {
-                newFollowed.delete(username);
+                newFollowed.delete(normalizedUsername);
             } else {
-                newFollowed.add(username);
+                newFollowed.add(normalizedUsername);
             }
             return { ...prevState, followedUsernames: newFollowed };
         });
@@ -871,7 +879,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             }
             // Re-sync with database after action to ensure consistency.
             const usernames = await getFollowingList(user.id);
-            setState(prev => ({ ...prev, followedUsernames: new Set(usernames) }));
+            setState(prev => ({
+                ...prev,
+                followedUsernames: new Set(usernames.map((item) => item.toLowerCase())),
+            }));
         } catch (error) {
             console.error("Failed to toggle follow:", error);
             addToast('Failed to update follow status.', 'error');
@@ -879,16 +890,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             setState((prevState: AppState) => {
                 const newFollowed = new Set(prevState.followedUsernames);
                 if (alreadyFollowing) {
-                    newFollowed.add(username);
+                    newFollowed.add(normalizedUsername);
                 } else {
-                    newFollowed.delete(username);
+                    newFollowed.delete(normalizedUsername);
                 }
                 return { ...prevState, followedUsernames: newFollowed };
             });
         }
     }, [state.followedUsernames, addToast]);
 
-    const isUserFollowed = useCallback((username: string) => state.followedUsernames.has(username), [state.followedUsernames]);
+    const isUserFollowed = useCallback(
+        (username: string) => state.followedUsernames.has(username.trim().toLowerCase()),
+        [state.followedUsernames]
+    );
 
     const voteInPoll = useCallback((postId: string, optionIndex: number) => {
         // FIX: Explicitly typed `prevState` as AppState.

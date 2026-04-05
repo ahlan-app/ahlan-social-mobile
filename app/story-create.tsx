@@ -87,8 +87,11 @@ export default function StoryCreateScreen() {
         if (options.imageUri) {
           const response = await fetch(options.imageUri);
           const blob = await response.blob();
+          const uploadBlob = blob.type
+            ? blob
+            : new Blob([blob], { type: 'image/jpeg' });
           const realStory = await uploadStory(
-            blob,
+            uploadBlob,
             caption.trim() || null,
             userProfile.id,
           );
@@ -99,10 +102,9 @@ export default function StoryCreateScreen() {
             throw new Error('Upload returned null');
           }
         } else if (options.text) {
-          // Text-only story — upload as caption with no file
-          const textBlob = new Blob([options.text], { type: 'text/plain' });
+          // Text-only story — skip storage upload and save only caption.
           const realStory = await uploadStory(
-            textBlob,
+            null,
             options.text,
             userProfile.id,
           );

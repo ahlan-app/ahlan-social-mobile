@@ -96,6 +96,7 @@ export default function UserProfileScreen() {
   const [activeTab, setActiveTab] = useState<TabType>('posts');
   const [menuVisible, setMenuVisible] = useState(false);
   const [reportMenuVisible, setReportMenuVisible] = useState(false);
+  const [followPending, setFollowPending] = useState(false);
 
   const isFollowing = isUserFollowed(username || '');
   const isBlocked = isUserBlocked(username || '');
@@ -163,6 +164,26 @@ export default function UserProfileScreen() {
     setRefreshing(false);
   }, [fetchData]);
 
+  const handleToggleFollow = useCallback(async () => {
+    if (!username || !profile?.id || isMyProfile || followPending) return;
+    const wasFollowing = isFollowing;
+
+    setFollowPending(true);
+    setFollowerCount(prev => Math.max(0, prev + (wasFollowing ? -1 : 1)));
+
+    try {
+      await toggleFollowUser(username);
+      const [followers, following] = await Promise.all([
+        getFollowerCount(profile.id),
+        getFollowingCount(profile.id),
+      ]);
+      setFollowerCount(followers);
+      setFollowingCount(following);
+    } finally {
+      setFollowPending(false);
+    }
+  }, [username, profile?.id, isMyProfile, followPending, isFollowing, toggleFollowUser]);
+
   const handleBlockToggle = () => {
     setMenuVisible(false);
     if (isBlocked) {
@@ -210,9 +231,13 @@ export default function UserProfileScreen() {
 
   const handlePostPress = useCallback((post: Post) => {
     router.push(`/post/${post.id}`);
-  }, []);
+  }, [router]);
 
   const currentData = activeTab === 'posts' ? posts : reposts;
+  const renderItem = ({ item }: { item: Post }) => (
+    <GridTile post={item} onPress={() => handlePostPress(item)} />
+  );
+  const emptyMessage = activeTab === 'posts' ? 'No posts yet.' : 'No reposts yet.';
 
   // Loading state
   if (loading && !profile) {
@@ -321,11 +346,12 @@ export default function UserProfileScreen() {
             ) : (
               <>
                 <Pressable
-                  onPress={() => toggleFollowUser(username || '')}
-                  className={`flex-1 py-2 rounded-full items-center ${isFollowing ? 'border border-gray-700' : 'bg-blue-600'}`}
+                  onPress={() => { void handleToggleFollow(); }}
+                  disabled={followPending}
+                  className={`flex-1 py-2 rounded-full items-center ${isFollowing ? 'border border-gray-700' : 'bg-blue-600'} ${followPending ? 'opacity-60' : ''}`}
                 >
                   <Text className="text-white font-semibold">
-                    {isFollowing ? 'Unfollow' : 'Follow'}
+                    {followPending ? '...' : (isFollowing ? 'Unfollow' : 'Follow')}
                   </Text>
                 </Pressable>
                 <Pressable
@@ -369,12 +395,6 @@ export default function UserProfileScreen() {
       )}
     </View>
   );
-
-  const renderItem = useCallback(({ item }: { item: Post }) => (
-    <GridTile post={item} onPress={() => handlePostPress(item)} />
-  ), [handlePostPress]);
-
-  const emptyMessage = activeTab === 'posts' ? 'No posts yet.' : 'No reposts yet.';
 
   return (
     <SafeAreaView className="flex-1 bg-black">

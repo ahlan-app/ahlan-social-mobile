@@ -1,3 +1,4 @@
+import "../global.css";
 import React, { useEffect, useRef } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -19,6 +20,7 @@ import {
   addNotificationResponseListener,
   setBadgeCount,
 } from '../services/notifications';
+import ToastContainer from '../components/native/Toast';
 
 // Keep the splash screen visible while we fetch resources
 SplashScreen.preventAutoHideAsync();
@@ -131,6 +133,7 @@ export default function RootLayout() {
         <AppProvider>
           <StatusBar style="light" />
           <RootLayoutNav />
+          <ToastContainer />
         </AppProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

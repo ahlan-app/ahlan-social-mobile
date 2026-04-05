@@ -82,6 +82,7 @@ export interface Notification {
 
 export interface Comment {
     id: string;
+    userId?: string;
     username: string;
     avatar: string | null;
     text: string;

@@ -1,19 +1,13 @@
 import { createClient } from "@supabase/supabase-js";
-import * as SecureStore from "expo-secure-store";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const ExpoSecureStoreAdapter = {
-  getItem: (key: string) => SecureStore.getItemAsync(key),
-  setItem: (key: string, value: string) => SecureStore.setItemAsync(key, value),
-  removeItem: (key: string) => SecureStore.deleteItemAsync(key),
-};
-
-const supabaseUrl = "https://zwtfvauwfegnlligyuji.supabase.co";
+const supabaseUrl = "https://uzhahidkajpoefmrasqr.supabase.co";
 const supabaseAnonKey =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3dGZ2YXV3ZmVnbmxsaWd5dWppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA2NTAxNTEsImV4cCI6MjA3NjIyNjE1MX0.NoyOc54uSadzIupbvcqE8t02zGEdg2pJ7LD6J53YX3s";
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV6aGFoaWRrYWpwb2VmbXJhc3FyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE3NjkxNzEsImV4cCI6MjA4NzM0NTE3MX0.rKCzvu4AGglf2b6RcaWml6uLNqlS8KiaEdHHpKWWeNg";
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    storage: ExpoSecureStoreAdapter,
+    storage: AsyncStorage,
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: false,

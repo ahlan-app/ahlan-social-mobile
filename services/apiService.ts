@@ -1,7 +1,170 @@
 // FIX: Import all necessary types from the newly created types.ts file.
 import type { Message, Post, Notification, Comment, Story, UserProfile, SimpleUser, Hashtag } from '../types';
-// Re-export the supabase client from the native adapter (uses SecureStore for session persistence)
-export { supabase } from './supabase.native';
+import type { User } from '@supabase/supabase-js';
+// Import supabase client from the native adapter (uses SecureStore for session persistence)
+import { supabase } from './supabase.native';
+// Re-export so other files can import from apiService
+export { supabase };
+
+export const FEED_PAGE_SIZE = 20;
+
+const POST_SELECT_QUERY = `
+    id,
+    user_id,
+    content,
+    image_url,
+    media_type,
+    media_aspect_ratio,
+    created_at,
+    profiles!user_id(
+        username,
+        avatar_url,
+        full_name,
+        is_verified
+    ),
+    likes:likes(count),
+    comments:comments(count),
+    reposts:reposts(count)
+`;
+
+const toNumber = (value: unknown): number => {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed)) return parsed;
+    }
+    return 0;
+};
+
+const extractCount = (embedded: unknown, fallback: unknown): number => {
+    if (Array.isArray(embedded)) {
+        const first = embedded[0] as { count?: unknown } | undefined;
+        if (first && typeof first === 'object' && 'count' in first) {
+            return toNumber(first.count);
+        }
+        return embedded.length;
+    }
+    return toNumber(fallback);
+};
+
+const normalizeMediaType = (mediaType: unknown, mediaUrl?: string): Post['media_type'] => {
+    if (mediaType === 'text') return 'text';
+    return mediaUrl ? 'image' : 'text';
+};
+
+const getFeedUserIds = async (userId: string): Promise<string[]> => {
+    const { data: followingData, error: followingError } = await supabase
+        .from('follows')
+        .select('followed_id')
+        .eq('follower_id', userId);
+
+    if (followingError) throw followingError;
+
+    const followingIds = (followingData || []).map((f: any) => f.followed_id);
+    return Array.from(new Set([...followingIds, userId]));
+};
+
+const DEFAULT_USER_BIO = 'Hello, I am using Ahlan';
+
+const sanitizeUsername = (value: string): string =>
+    value
+        .toLowerCase()
+        .replace(/[^a-z0-9_.]/g, '')
+        .replace(/^[._]+|[._]+$/g, '')
+        .slice(0, 20);
+
+const buildUsernameCandidate = (base: string, attempt: number, userId: string): string => {
+    const fallback = `user_${userId.slice(0, 6)}`;
+    const normalizedBase = sanitizeUsername(base) || fallback;
+
+    if (attempt === 0) {
+        return normalizedBase.length >= 3 ? normalizedBase : `${normalizedBase}${userId.slice(0, 3)}`.slice(0, 20);
+    }
+
+    const suffix = `${attempt}${userId.slice(0, 3)}`.toLowerCase();
+    const maxBaseLength = Math.max(3, 20 - suffix.length - 1);
+    const trimmedBase = normalizedBase.slice(0, maxBaseLength);
+    return `${trimmedBase}_${suffix}`.slice(0, 20);
+};
+
+const profileExists = async (userId: string): Promise<boolean> => {
+    const { data, error } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('id', userId)
+        .maybeSingle();
+
+    if (error) {
+        console.error('Profile check error:', error.message || error);
+        return false;
+    }
+
+    return Boolean(data);
+};
+
+const ensureProfileRowForUser = async (user: User): Promise<boolean> => {
+    if (await profileExists(user.id)) return true;
+
+    const metadata = user.user_metadata || {};
+    const fullName = typeof metadata.full_name === 'string' && metadata.full_name.trim().length > 0
+        ? metadata.full_name.trim()
+        : (user.email?.split('@')[0] || 'Ahlan User');
+    const avatarUrl = typeof metadata.avatar_url === 'string' ? metadata.avatar_url : null;
+    const bio = typeof metadata.bio === 'string' && metadata.bio.trim().length > 0
+        ? metadata.bio.trim()
+        : DEFAULT_USER_BIO;
+    const baseUsername =
+        (typeof metadata.username === 'string' && metadata.username) ||
+        (typeof metadata.preferred_username === 'string' && metadata.preferred_username) ||
+        (user.email?.split('@')[0] || '');
+
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+        const username = buildUsernameCandidate(baseUsername, attempt, user.id);
+
+        const { error } = await supabase
+            .from('profiles')
+            .upsert(
+                {
+                    id: user.id,
+                    username,
+                    full_name: fullName,
+                    avatar_url: avatarUrl,
+                    bio,
+                },
+                { onConflict: 'id' },
+            );
+
+        if (!error) {
+            return true;
+        }
+
+        if (error.code === '23505') {
+            continue;
+        }
+
+        console.error('Error ensuring profile row:', error.message || error);
+        return false;
+    }
+
+    return profileExists(user.id);
+};
+
+const ensureProfileForNotificationUser = async (userId: string): Promise<boolean> => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user && user.id === userId) {
+        return ensureProfileRowForUser(user);
+    }
+    return profileExists(userId);
+};
+
+export const ensureCurrentUserProfile = async (): Promise<boolean> => {
+    const { data: { user }, error } = await supabase.auth.getUser();
+    if (error || !user) {
+        console.error('Cannot ensure profile without an authenticated user.', error?.message || error);
+        return false;
+    }
+    return ensureProfileRowForUser(user);
+};
 
 
 export async function sendNotification({
@@ -23,6 +186,20 @@ export async function sendNotification({
 }) {
   try {
     if (!receiver_id || receiver_id === sender_id) return; // Do not send notifications to oneself
+
+    const [senderReady, receiverReady] = await Promise.all([
+      ensureProfileForNotificationUser(sender_id),
+      ensureProfileForNotificationUser(receiver_id),
+    ]);
+
+    if (!senderReady || !receiverReady) {
+      console.warn('Skipping notification due to missing sender/receiver profile row.', {
+        sender_id,
+        receiver_id,
+        type,
+      });
+      return;
+    }
 
     const { error } = await supabase.from("notifications").insert([
       {
@@ -95,11 +272,154 @@ async function localUrlToBlob(url: string): Promise<Blob> {
     return response.blob();
 }
 
+const toStorageExtension = (mimeType: string | undefined, fallback: string = 'bin'): string => {
+    if (!mimeType) return fallback;
+    const normalized = mimeType.toLowerCase();
+    if (normalized.includes('jpeg')) return 'jpg';
+    if (normalized.includes('png')) return 'png';
+    if (normalized.includes('gif')) return 'gif';
+    if (normalized.includes('webp')) return 'webp';
+    if (normalized.includes('mp4')) return 'mp4';
+    if (normalized.includes('quicktime')) return 'mov';
+    if (normalized.includes('plain')) return 'txt';
+
+    const raw = normalized.split('/')[1] || fallback;
+    const cleaned = raw.replace(/[^a-z0-9]/g, '');
+    return cleaned.length > 0 ? cleaned : fallback;
+};
+
+const isLikelyStoragePolicyError = (error: unknown): boolean => {
+    const message = String((error as { message?: unknown })?.message || error).toLowerCase();
+    return (
+        message.includes('row-level security policy') ||
+        message.includes('not authorized') ||
+        message.includes('permission denied')
+    );
+};
+
+const isStorageBucketMissingError = (error: unknown): boolean => {
+    const message = String((error as { message?: unknown })?.message || error).toLowerCase();
+    return message.includes('bucket') && message.includes('not found');
+};
+
+const uploadToPostMediaBucket = async (
+    file: Blob | File,
+    userId: string,
+    scope: 'posts' | 'stories',
+): Promise<string> => {
+    const fallbackExtension = scope === 'stories' ? 'jpg' : 'bin';
+    const extension = toStorageExtension(file.type, fallbackExtension);
+    const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${extension}`;
+    const candidatePaths = [
+        `${userId}/${scope}/${fileName}`,
+        `${scope}/${userId}/${fileName}`,
+        `public/${userId}/${fileName}`,
+    ];
+
+    let lastError: unknown = null;
+
+    for (const filePath of candidatePaths) {
+        const { error } = await supabase.storage
+            .from('post-media')
+            .upload(filePath, file, {
+                cacheControl: '3600',
+                upsert: false,
+                contentType: file.type || undefined,
+            });
+
+        if (!error) {
+            return filePath;
+        }
+
+        lastError = error;
+        if (!isLikelyStoragePolicyError(error)) {
+            throw error;
+        }
+    }
+
+    throw lastError || new Error('Storage upload failed.');
+};
+
+const uploadStoryMedia = async (
+    file: Blob | File,
+    userId: string,
+): Promise<{ bucket: string; filePath: string }> => {
+    const fallbackExtension = 'jpg';
+    const extension = toStorageExtension(file.type, fallbackExtension);
+    const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${extension}`;
+    const bucketCandidates = ['post-media', 'avatars', 'stories', 'story-media'];
+    const filePathCandidates = [
+        `${userId}/stories/${fileName}`,
+        `stories/${userId}/${fileName}`,
+        `${userId}/${fileName}`,
+        `${userId}/posts/${fileName}`,
+        `public/${userId}/${fileName}`,
+    ];
+
+    let lastError: unknown = null;
+
+    for (const bucket of bucketCandidates) {
+        for (const filePath of filePathCandidates) {
+            const { error } = await supabase.storage
+                .from(bucket)
+                .upload(filePath, file, {
+                    cacheControl: '3600',
+                    upsert: false,
+                    contentType: file.type || undefined,
+                });
+
+            if (!error) {
+                return { bucket, filePath };
+            }
+
+            lastError = error;
+            if (!isLikelyStoragePolicyError(error) && !isStorageBucketMissingError(error)) {
+                throw error;
+            }
+        }
+    }
+
+    throw lastError || new Error('Story storage upload failed.');
+};
+
+const blobToDataUrl = async (blob: Blob): Promise<string> => {
+    if (typeof FileReader === 'undefined') {
+        throw new Error('FileReader is not available');
+    }
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            if (typeof reader.result === 'string') {
+                resolve(reader.result);
+            } else {
+                reject(new Error('Could not convert blob to data URL'));
+            }
+        };
+        reader.onerror = () => reject(reader.error || new Error('FileReader error'));
+        reader.readAsDataURL(blob);
+    });
+};
+
+const buildTextStoryDataUri = (text: string): string => {
+    const normalized = (text || '').trim() || 'Story';
+    const escaped = normalized
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920"><defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#1e3a5f"/><stop offset="100%" stop-color="#0f172a"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#bg)"/><foreignObject x="88" y="220" width="904" height="1480"><div xmlns="http://www.w3.org/1999/xhtml" style="color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:54px;line-height:1.35;font-weight:700;white-space:pre-wrap;word-break:break-word;">${escaped}</div></foreignObject></svg>`;
+    return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+};
+
 export const publishPost = async (post: Post): Promise<Post | null> => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
         console.error("❌ Error publishing post: User not authenticated.");
         throw new Error("User not authenticated");
+    }
+
+    const profileReady = await ensureProfileRowForUser(user);
+    if (!profileReady) {
+        throw new Error('Could not create or find a profile row for this account. Please re-login and try again.');
     }
 
     try {
@@ -112,22 +432,7 @@ export const publishPost = async (post: Post): Promise<Post | null> => {
         // If the media is a local URL (from camera or gallery), upload it to storage first.
         if (uploadUrl && (uploadUrl.startsWith('blob:') || uploadUrl.startsWith('data:') || uploadUrl.startsWith('file://'))) {
             const blob = await localUrlToBlob(uploadUrl);
-            // Determine file extension, default to 'bin' if type is not available
-            const fileExtension = blob.type.split('/')[1] || 'bin'; 
-            const filePath = `public/${user.id}/${Date.now()}.${fileExtension}`;
-
-            // Upload to storage. The bucket for posts media is named 'post-media'.
-            const { data: uploadData, error: uploadError } = await supabase.storage
-                .from('post-media')
-                .upload(filePath, blob, {
-                    cacheControl: '3600',
-                    upsert: false,
-                });
-
-            if (uploadError) {
-                console.error('Error uploading post media:', uploadError.message || uploadError);
-                throw uploadError;
-            }
+            const filePath = await uploadToPostMediaBucket(blob, user.id, 'posts');
 
             // Get the permanent public URL for the uploaded file.
             const { data: publicUrlData } = supabase.storage
@@ -162,36 +467,21 @@ export const publishPost = async (post: Post): Promise<Post | null> => {
 
         const { data, error: fetchError } = await supabase
             .from('posts')
-            .select(`
-                *,
-                profiles!user_id (
-                    username,
-                    avatar_url,
-                    full_name,
-                    is_verified
-                )
-            `)
+            .select(POST_SELECT_QUERY)
             .eq('id', insertData.id)
             .single();
 
         if (fetchError) throw fetchError;
         if (!data) throw new Error("Could not retrieve post after creation.");
-        
-        const postWithCounts = {
-            ...data,
-            likes_count: 0,
-            comments_count: 0,
-            reposts_count: 0
-        };
 
-        console.log('✅ Post başarıyla paylaşıldı:', postWithCounts);
+        console.log('✅ Post başarıyla paylaşıldı:', data);
 
         // Handle mentions after post is successfully created
         if (content.trim().length > 0) {
             await handleMentions(content, user.id, data.id, null);
         }
         
-        return mapPostData(postWithCounts);
+        return mapPostData(data);
 
     } catch (err) {
         console.error("❌ Error publishing post:", (err as Error).message || err);
@@ -260,18 +550,32 @@ export const updatePost = async (post: Post): Promise<Post | null> => {
 
 
 export const cleanHtml = (html: string): string => {
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    return doc.body.textContent || "";
+    if (!html) return "";
+
+    if (typeof DOMParser !== 'undefined') {
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        return doc.body.textContent || "";
+    }
+
+    return html
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
 };
 
 export const mapPostData = (p: any): Post => {
+    const mediaUrl = typeof p.image_url === 'string' && p.image_url.trim().length > 0
+        ? p.image_url
+        : undefined;
+
     let media_preview_url: string | undefined = undefined;
 
     // Create a low-quality preview URL for images and videos hosted on Supabase.
     // This is used for the "blur-up" loading effect.
-    if (p.image_url && p.image_url.includes('supabase.co')) {
+    if (mediaUrl && mediaUrl.includes('supabase.co')) {
         try {
-            const url = new URL(p.image_url);
+            const url = new URL(mediaUrl);
             // Transform Supabase storage URL to use the image transformation API.
             // from: /storage/v1/object/public/posts/...
             // to:   /storage/v1/render/image/public/posts/...
@@ -293,23 +597,23 @@ export const mapPostData = (p: any): Post => {
         }
     }
 
-    const profile = p.profiles || {};
+    const profile = Array.isArray(p.profiles) ? (p.profiles[0] || {}) : (p.profiles || {});
 
     return {
         id: p.id,
-        content: p.content,
-        media: p.image_url,
+        content: typeof p.content === 'string' ? p.content : '',
+        media: mediaUrl,
         media_preview_url, // Add the generated preview URL to the post object.
-        media_type: p.media_type || (p.image_url ? 'image' : 'text'),
+        media_type: normalizeMediaType(p.media_type, mediaUrl),
         media_aspect_ratio: p.media_aspect_ratio,
         timestamp: p.created_at,
         username: profile.username || 'unknown_user',
         avatar: profile.avatar_url || null,
-        name: profile.full_name,
-        isVerified: profile.is_verified || false,
-        likes: Array.isArray(p.likes) ? (p.likes[0]?.count ?? 0) : (p.likes_count ?? 0),
-        reposts: Array.isArray(p.reposts) ? (p.reposts[0]?.count ?? 0) : (p.reposts_count ?? 0),
-        replies: Array.isArray(p.comments) ? (p.comments[0]?.count ?? 0) : (p.comments_count ?? 0),
+        name: profile.full_name || profile.username,
+        isVerified: Boolean(profile.is_verified),
+        likes: extractCount(p.likes, p.likes_count),
+        reposts: extractCount(p.reposts, p.reposts_count),
+        replies: extractCount(p.comments, p.comments_count),
     };
 };
 
@@ -322,74 +626,23 @@ export const getTimeline = async (): Promise<Post[]> => {
             return [];
         }
 
-        const { data: followingData, error: followingError } = await supabase
-            .from('follows')
-            .select('followed_id')
-            .eq('follower_id', user.id);
-
-        if (followingError) throw followingError;
-
-        const followingIds = followingData.map(f => f.followed_id);
-        const userIdsToFetch = [...followingIds, user.id];
+        const userIdsToFetch = await getFeedUserIds(user.id);
 
         const { data: postsData, error: postsError } = await supabase
             .from('posts')
-            .select(`
-                *,
-                profiles!user_id(
-                    username,
-                    avatar_url,
-                    full_name,
-                    is_verified
-                )
-            `)
+            .select(POST_SELECT_QUERY)
             .in('user_id', userIdsToFetch)
             .order('created_at', { ascending: false })
-            .limit(20);
+            .limit(FEED_PAGE_SIZE);
 
         if (postsError) throw postsError;
-        if (!postsData) return [];
+        if (!postsData || postsData.length === 0) {
+            currentFeedCursor = null;
+            return [];
+        }
 
-        const postIds = postsData.map(post => post.id);
-        if (postIds.length === 0) return [];
-
-        const [likesResult, commentsResult, repostsResult] = await Promise.all([
-            supabase.from('likes').select('post_id').in('post_id', postIds),
-            supabase.from('comments').select('post_id').in('post_id', postIds),
-            supabase.from('reposts').select('post_id').in('post_id', postIds)
-        ]);
-
-        const { data: likesData, error: likesError } = likesResult;
-        if (likesError) throw likesError;
-        const { data: commentsData, error: commentsError } = commentsResult;
-        if (commentsError) throw commentsError;
-        const { data: repostsData, error: repostsError } = repostsResult;
-        if (repostsError) throw repostsError;
-
-        const likesCountMap: Record<string, number> = {};
-        const commentsCountMap: Record<string, number> = {};
-        const repostsCountMap: Record<string, number> = {};
-
-        likesData?.forEach(like => {
-            likesCountMap[like.post_id] = (likesCountMap[like.post_id] || 0) + 1;
-        });
-
-        commentsData?.forEach(comment => {
-            commentsCountMap[comment.post_id] = (commentsCountMap[comment.post_id] || 0) + 1;
-        });
-
-        repostsData?.forEach(repost => {
-            repostsCountMap[repost.post_id] = (repostsCountMap[repost.post_id] || 0) + 1;
-        });
-
-        const postsWithCounts = postsData.map(post => ({
-            ...post,
-            likes_count: likesCountMap[post.id] || 0,
-            comments_count: commentsCountMap[post.id] || 0,
-            reposts_count: repostsCountMap[post.id] || 0
-        }));
-
-        return postsWithCounts.map(mapPostData);
+        currentFeedCursor = postsData[postsData.length - 1]?.created_at ?? null;
+        return postsData.map(mapPostData);
 
     } catch (error) {
         console.error("Zaman çizelgesi alınırken hata oluştu:", (error as Error).message || error);
@@ -398,7 +651,7 @@ export const getTimeline = async (): Promise<Post[]> => {
 };
 
 
-let currentPage = 1;
+let currentFeedCursor: string | null = null;
 export const getMorePosts = async (): Promise<Post[]> => {
     try {
         const { data: { user } } = await supabase.auth.getUser();
@@ -407,75 +660,26 @@ export const getMorePosts = async (): Promise<Post[]> => {
             return [];
         }
 
-        const { data: followingData, error: followingError } = await supabase
-            .from('follows')
-            .select('followed_id')
-            .eq('follower_id', user.id);
-        
-        if (followingError) throw followingError;
+        if (!currentFeedCursor) return [];
 
-        const followingIds = followingData.map(f => f.followed_id);
-        const userIdsToFetch = [...followingIds, user.id];
+        const userIdsToFetch = await getFeedUserIds(user.id);
 
         const { data: postsData, error: postsError } = await supabase
             .from('posts')
-            .select(`
-                *,
-                profiles!user_id(
-                    username,
-                    avatar_url,
-                    full_name,
-                    is_verified
-                )
-            `)
+            .select(POST_SELECT_QUERY)
             .in('user_id', userIdsToFetch)
             .order('created_at', { ascending: false })
-            .range(currentPage * 20, (currentPage + 1) * 20 - 1);
+            .lt('created_at', currentFeedCursor)
+            .limit(FEED_PAGE_SIZE);
 
         if (postsError) throw postsError;
-        if (!postsData || postsData.length === 0) return [];
+        if (!postsData || postsData.length === 0) {
+            currentFeedCursor = null;
+            return [];
+        }
 
-        currentPage++;
-
-        const postIds = postsData.map(post => post.id);
-        
-        const [likesResult, commentsResult, repostsResult] = await Promise.all([
-            supabase.from('likes').select('post_id').in('post_id', postIds),
-            supabase.from('comments').select('post_id').in('post_id', postIds),
-            supabase.from('reposts').select('post_id').in('post_id', postIds)
-        ]);
-
-        const { data: likesData, error: likesError } = likesResult;
-        if (likesError) throw likesError;
-        const { data: commentsData, error: commentsError } = commentsResult;
-        if (commentsError) throw commentsError;
-        const { data: repostsData, error: repostsError } = repostsResult;
-        if (repostsError) throw repostsError;
-
-        const likesCountMap: Record<string, number> = {};
-        const commentsCountMap: Record<string, number> = {};
-        const repostsCountMap: Record<string, number> = {};
-
-        likesData?.forEach(like => {
-            likesCountMap[like.post_id] = (likesCountMap[like.post_id] || 0) + 1;
-        });
-
-        commentsData?.forEach(comment => {
-            commentsCountMap[comment.post_id] = (commentsCountMap[comment.post_id] || 0) + 1;
-        });
-
-        repostsData?.forEach(repost => {
-            repostsCountMap[repost.post_id] = (repostsCountMap[repost.post_id] || 0) + 1;
-        });
-
-        const postsWithCounts = postsData.map(post => ({
-            ...post,
-            likes_count: likesCountMap[post.id] || 0,
-            comments_count: commentsCountMap[post.id] || 0,
-            reposts_count: repostsCountMap[post.id] || 0
-        }));
-
-        return postsWithCounts.map(mapPostData);
+        currentFeedCursor = postsData[postsData.length - 1]?.created_at ?? null;
+        return postsData.map(mapPostData);
 
     } catch (error) {
         console.error("Error fetching more posts:", (error as Error).message || error);
@@ -484,68 +688,20 @@ export const getMorePosts = async (): Promise<Post[]> => {
 };
 
 export const resetPageCounter = () => {
-    currentPage = 1;
+    currentFeedCursor = null;
 };
 
 export const getTrendingPosts = async (): Promise<Post[]> => {
     try {
         const { data: postsData, error: postsError } = await supabase
             .from('posts')
-            .select(`
-                *,
-                profiles!user_id(
-                    username,
-                    avatar_url,
-                    full_name,
-                    is_verified
-                )
-            `)
+            .select(POST_SELECT_QUERY)
             .order('created_at', { ascending: false })
-            .limit(21);
+            .limit(FEED_PAGE_SIZE + 1);
 
         if (postsError) throw postsError;
         if (!postsData) return [];
-
-        const postIds = postsData.map(post => post.id);
-        if (postIds.length === 0) return [];
-
-        const [likesResult, commentsResult, repostsResult] = await Promise.all([
-            supabase.from('likes').select('post_id').in('post_id', postIds),
-            supabase.from('comments').select('post_id').in('post_id', postIds),
-            supabase.from('reposts').select('post_id').in('post_id', postIds)
-        ]);
-
-        const { data: likesData, error: likesError } = likesResult;
-        if (likesError) throw likesError;
-        const { data: commentsData, error: commentsError } = commentsResult;
-        if (commentsError) throw commentsError;
-        const { data: repostsData, error: repostsError } = repostsResult;
-        if (repostsError) throw repostsError;
-
-        const likesCountMap: Record<string, number> = {};
-        const commentsCountMap: Record<string, number> = {};
-        const repostsCountMap: Record<string, number> = {};
-
-        likesData?.forEach(like => {
-            likesCountMap[like.post_id] = (likesCountMap[like.post_id] || 0) + 1;
-        });
-
-        commentsData?.forEach(comment => {
-            commentsCountMap[comment.post_id] = (commentsCountMap[comment.post_id] || 0) + 1;
-        });
-
-        repostsData?.forEach(repost => {
-            repostsCountMap[repost.post_id] = (repostsCountMap[repost.post_id] || 0) + 1;
-        });
-
-        const postsWithCounts = postsData.map(post => ({
-            ...post,
-            likes_count: likesCountMap[post.id] || 0,
-            comments_count: commentsCountMap[post.id] || 0,
-            reposts_count: repostsCountMap[post.id] || 0
-        }));
-
-        return postsWithCounts.map(mapPostData);
+        return postsData.map(mapPostData);
     } catch (error) {
         console.error("Error fetching trending posts:", (error as Error).message || error);
         return [];
@@ -570,41 +726,12 @@ export const getPostById = async (postId: string): Promise<Post | undefined> => 
     try {
         const { data: postData, error: postError } = await supabase
             .from('posts')
-            .select(`
-                *,
-                profiles!user_id(
-                    username,
-                    avatar_url,
-                    full_name,
-                    is_verified
-                )
-            `)
+            .select(POST_SELECT_QUERY)
             .eq('id', postId)
             .single();
 
         if (postError || !postData) throw postError || new Error("Post not found");
-
-        const [likesResult, commentsResult, repostsResult] = await Promise.all([
-            supabase.from('likes').select('*', { count: 'exact', head: true }).eq('post_id', postId),
-            supabase.from('comments').select('*', { count: 'exact', head: true }).eq('post_id', postId),
-            supabase.from('reposts').select('*', { count: 'exact', head: true }).eq('post_id', postId)
-        ]);
-
-        const { count: likes_count, error: likesError } = likesResult;
-        if (likesError) throw likesError;
-        const { count: comments_count, error: commentsError } = commentsResult;
-        if (commentsError) throw commentsError;
-        const { count: reposts_count, error: repostsError } = repostsResult;
-        if (repostsError) throw repostsError;
-        
-        const postWithCounts = {
-            ...postData,
-            likes_count: likes_count || 0,
-            comments_count: comments_count || 0,
-            reposts_count: reposts_count || 0
-        };
-        
-        return mapPostData(postWithCounts);
+        return mapPostData(postData);
         
     } catch (error) {
         console.error("Error fetching post by ID:", (error as Error).message || error);
@@ -947,20 +1074,61 @@ export const getStoryById = async (storyId: string): Promise<Story | null> => {
     return null;
 };
 
-export const uploadStory = async (file: File | Blob, caption: string | null, userId: string): Promise<Story | null> => {
-    const filePath = `stories/${userId}/${Date.now()}`;
-    const { error: uploadError } = await supabase.storage.from('post-media').upload(filePath, file);
-    if (uploadError) throw uploadError;
+export const uploadStory = async (file: File | Blob | null, caption: string | null, userId: string): Promise<Story | null> => {
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    if (userError || !user) {
+        throw new Error('User not authenticated');
+    }
 
-    const { data: urlData } = supabase.storage.from('post-media').getPublicUrl(filePath);
-    if (!urlData) throw new Error("Could not get public URL for story.");
+    if (userId && userId !== user.id) {
+        console.warn('uploadStory user mismatch. Falling back to authenticated user.', {
+            requestedUserId: userId,
+            authenticatedUserId: user.id,
+        });
+    }
 
-    const { data: storyData, error: insertError } = await supabase
+    const profileReady = await ensureProfileRowForUser(user);
+    if (!profileReady) {
+        throw new Error('Could not create or find a profile row for this account.');
+    }
+
+    let mediaUrl: string | null = null;
+    if (file) {
+        try {
+            const { bucket, filePath } = await uploadStoryMedia(file, user.id);
+            const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(filePath);
+            if (!urlData) throw new Error("Could not get public URL for story.");
+            mediaUrl = urlData.publicUrl;
+        } catch (uploadError) {
+            if (isLikelyStoragePolicyError(uploadError) || isStorageBucketMissingError(uploadError)) {
+                console.warn('Story media upload skipped due storage policy/bucket constraints.', uploadError);
+                try {
+                    mediaUrl = await blobToDataUrl(file);
+                } catch (dataUrlError) {
+                    console.warn('Could not convert story media to inline data URL.', dataUrlError);
+                    mediaUrl = buildTextStoryDataUri(caption || 'Story');
+                }
+            } else {
+                throw uploadError;
+            }
+        }
+    }
+
+    const insertStory = async (url: string | null) => supabase
         .from('stories')
-        .insert({ user_id: userId, media_url: urlData.publicUrl, caption })
+        .insert({ user_id: user.id, media_url: url, caption })
         .select('*, profiles!user_id(username, avatar_url)')
         .single();
-    
+
+    let { data: storyData, error: insertError } = await insertStory(mediaUrl);
+
+    if (insertError && !file && insertError.code === '23502') {
+        const fallbackUrl = buildTextStoryDataUri(caption || '');
+        const retry = await insertStory(fallbackUrl);
+        storyData = retry.data;
+        insertError = retry.error;
+    }
+
     if (insertError) throw insertError;
     
     return {
@@ -1060,7 +1228,7 @@ export const prefetchUserProfile = (username: string) => {
 export const getUserPosts = async (userId: string): Promise<Post[]> => {
     const { data, error } = await supabase
         .from('posts')
-        .select('*, profiles!user_id(*)')
+        .select(POST_SELECT_QUERY)
         .eq('user_id', userId)
         .order('created_at', { ascending: false });
     
@@ -1084,35 +1252,12 @@ export const getUserReposts = async (userId: string): Promise<Post[]> => {
 
         const { data: postsData, error: postsError } = await supabase
             .from('posts')
-            .select(`*, profiles!user_id(username, avatar_url, full_name, is_verified)`)
+            .select(POST_SELECT_QUERY)
             .in('id', postIds);
 
         if (postsError) throw postsError;
         if (!postsData) return [];
-        
-        const [likesResult, commentsResult, repostsResult] = await Promise.all([
-            supabase.from('likes').select('post_id').in('post_id', postIds),
-            supabase.from('comments').select('post_id').in('post_id', postIds),
-            supabase.from('reposts').select('post_id').in('post_id', postIds)
-        ]);
-
-        const likesCountMap: Record<string, number> = {};
-        (likesResult.data || []).forEach(like => { likesCountMap[like.post_id] = (likesCountMap[like.post_id] || 0) + 1; });
-
-        const commentsCountMap: Record<string, number> = {};
-        (commentsResult.data || []).forEach(comment => { commentsCountMap[comment.post_id] = (commentsCountMap[comment.post_id] || 0) + 1; });
-
-        const repostsCountMap: Record<string, number> = {};
-        (repostsResult.data || []).forEach(repost => { repostsCountMap[repost.post_id] = (repostsCountMap[repost.post_id] || 0) + 1; });
-
-        const postsWithCounts = postsData.map(post => ({
-            ...post,
-            likes_count: likesCountMap[post.id] || 0,
-            comments_count: commentsCountMap[post.id] || 0,
-            reposts_count: repostsCountMap[post.id] || 0
-        }));
-
-        const sortedPosts = postsWithCounts.sort((a, b) => {
+        const sortedPosts = [...postsData].sort((a, b) => {
             // FIX: `repostOrderMap.get()` can return `undefined`. Using `?? 0` as a fallback ensures that `timeA` and `timeB` are always numbers, preventing a type error during the subtraction operation.
             const timeA = repostOrderMap.get(a.id) ?? 0;
             const timeB = repostOrderMap.get(b.id) ?? 0;
@@ -1142,37 +1287,14 @@ export const getSavedPosts = async (userId: string): Promise<Post[]> => {
 
         const { data: postsData, error: postsError } = await supabase
             .from('posts')
-            .select(`*, profiles!user_id(username, avatar_url, full_name, is_verified)`)
+            .select(POST_SELECT_QUERY)
             .in('id', postIds);
 
         if (postsError) throw postsError;
         if (!postsData) return [];
-        
-        const [likesResult, commentsResult, repostsResult] = await Promise.all([
-            supabase.from('likes').select('post_id').in('post_id', postIds),
-            supabase.from('comments').select('post_id').in('post_id', postIds),
-            supabase.from('reposts').select('post_id').in('post_id', postIds)
-        ]);
-
-        const likesCountMap: Record<string, number> = {};
-        (likesResult.data || []).forEach(like => { likesCountMap[like.post_id] = (likesCountMap[like.post_id] || 0) + 1; });
-
-        const commentsCountMap: Record<string, number> = {};
-        (commentsResult.data || []).forEach(comment => { commentsCountMap[comment.post_id] = (commentsCountMap[comment.post_id] || 0) + 1; });
-
-        const repostsCountMap: Record<string, number> = {};
-        (repostsResult.data || []).forEach(repost => { repostsCountMap[repost.post_id] = (repostsCountMap[repost.post_id] || 0) + 1; });
-
-        const postsWithCounts = postsData.map(post => ({
-            ...post,
-            likes_count: likesCountMap[post.id] || 0,
-            comments_count: commentsCountMap[post.id] || 0,
-            reposts_count: repostsCountMap[post.id] || 0
-        }));
-
         // Sort by when they were saved, not when they were created
         const savedOrderMap = new Map<string, number>(savedIdsData.map((r: any) => [r.post_id, new Date(r.created_at).getTime()]));
-        const sortedPosts = postsWithCounts.sort((a, b) => {
+        const sortedPosts = [...postsData].sort((a, b) => {
             // FIX: `savedOrderMap.get()` can return `undefined`. Using `?? 0` as a fallback ensures that `timeA` and `timeB` are always numbers, preventing a type error during the subtraction operation.
             const timeA = savedOrderMap.get(a.id) ?? 0;
             const timeB = savedOrderMap.get(b.id) ?? 0;
@@ -1227,7 +1349,17 @@ export const getFollowingCount = async (userId: string): Promise<number> => {
 export const getFollowingList = async (userId: string): Promise<string[]> => {
     const { data, error } = await supabase.from('follows').select('profiles!followed_id(username)').eq('follower_id', userId);
     if (error) return [];
-    return (data || []).map((item: any) => item.profiles.username);
+    const unique = new Set<string>();
+    for (const item of data || []) {
+        const profile = Array.isArray(item?.profiles)
+            ? item.profiles[0]
+            : item?.profiles;
+        const username = profile?.username;
+        if (typeof username === 'string' && username.trim().length > 0) {
+            unique.add(username.toLowerCase());
+        }
+    }
+    return Array.from(unique);
 };
 
 export const getFollowerUsers = async (userId: string): Promise<SimpleUser[]> => {
@@ -1236,13 +1368,21 @@ export const getFollowerUsers = async (userId: string): Promise<SimpleUser[]> =>
         .select('profiles!follower_id(id, username, full_name, avatar_url, is_verified)')
         .eq('followed_id', userId);
     if (error || !data) return [];
-    return data.map((item: any) => ({
-        id: item.profiles.id,
-        username: item.profiles.username,
-        name: item.profiles.full_name || item.profiles.username,
-        avatar: item.profiles.avatar_url,
-        isVerified: item.profiles.is_verified || false,
-    }));
+    const uniqueUsers = new Map<string, SimpleUser>();
+    data.forEach((item: any) => {
+        const profile = Array.isArray(item?.profiles)
+            ? item.profiles[0]
+            : item?.profiles;
+        if (!profile?.id || uniqueUsers.has(profile.id)) return;
+        uniqueUsers.set(profile.id, {
+            id: profile.id,
+            username: profile.username,
+            name: profile.full_name || profile.username,
+            avatar: profile.avatar_url,
+            isVerified: profile.is_verified || false,
+        });
+    });
+    return Array.from(uniqueUsers.values());
 };
 
 export const getFollowingUsers = async (userId: string): Promise<SimpleUser[]> => {
@@ -1251,18 +1391,45 @@ export const getFollowingUsers = async (userId: string): Promise<SimpleUser[]> =
         .select('profiles!followed_id(id, username, full_name, avatar_url, is_verified)')
         .eq('follower_id', userId);
     if (error || !data) return [];
-    return data.map((item: any) => ({
-        id: item.profiles.id,
-        username: item.profiles.username,
-        name: item.profiles.full_name || item.profiles.username,
-        avatar: item.profiles.avatar_url,
-        isVerified: item.profiles.is_verified || false,
-    }));
+    const uniqueUsers = new Map<string, SimpleUser>();
+    data.forEach((item: any) => {
+        const profile = Array.isArray(item?.profiles)
+            ? item.profiles[0]
+            : item?.profiles;
+        if (!profile?.id || uniqueUsers.has(profile.id)) return;
+        uniqueUsers.set(profile.id, {
+            id: profile.id,
+            username: profile.username,
+            name: profile.full_name || profile.username,
+            avatar: profile.avatar_url,
+            isVerified: profile.is_verified || false,
+        });
+    });
+    return Array.from(uniqueUsers.values());
 };
 
 export const followUser = async (follower_id: string, followed_id: string): Promise<void> => {
-    const { error } = await supabase.from('follows').insert({ follower_id, followed_id });
-    if (error) throw error;
+    const { data: existingFollow, error: existingError } = await supabase
+        .from('follows')
+        .select('follower_id')
+        .eq('follower_id', follower_id)
+        .eq('followed_id', followed_id)
+        .maybeSingle();
+
+    if (existingError) {
+        throw existingError;
+    }
+    if (existingFollow) {
+        return;
+    }
+
+    const { error } = await supabase
+        .from('follows')
+        .insert({ follower_id, followed_id });
+
+    if (error && error.code !== '23505') throw error;
+    if (error?.code === '23505') return;
+
     await sendNotification({ sender_id: follower_id, receiver_id: followed_id, type: 'follow' });
 };
 
@@ -1305,6 +1472,23 @@ export async function addComment(postId: string, userId: string, content: string
   return data;
 }
 
+export const deleteComment = async (commentId: string): Promise<void> => {
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    if (userError || !user) {
+        throw new Error('User not authenticated');
+    }
+
+    const { error } = await supabase
+        .from('comments')
+        .delete()
+        .eq('id', commentId)
+        .eq('user_id', user.id);
+
+    if (error) {
+        throw error;
+    }
+};
+
 export const getCommentsForPost = async (postId: string): Promise<Comment[]> => {
     const { data, error } = await supabase
         .from('comments')
@@ -1315,6 +1499,7 @@ export const getCommentsForPost = async (postId: string): Promise<Comment[]> => 
     if (error) return [];
     return (data || []).map((c: any) => ({
         id: c.id,
+        userId: c.user_id,
         username: c.profiles.username,
         avatar: c.profiles.avatar_url,
         text: c.content,

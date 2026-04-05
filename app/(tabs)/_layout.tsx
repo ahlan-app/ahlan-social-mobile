@@ -1,5 +1,7 @@
 import React from 'react';
 import { Tabs, useRouter } from 'expo-router';
+import { View, Text } from 'react-native';
+import { useApp } from '../../store/AppContext.native';
 import { 
   HomeIcon, 
   SearchIcon, 
@@ -10,6 +12,9 @@ import {
 
 export default function TabLayout() {
   const router = useRouter();
+  const { notifications, unreadMessageCount } = useApp();
+  const unreadNotificationCount = notifications?.filter(n => !n.is_read).length ?? 0;
+  const totalBadge = unreadNotificationCount + unreadMessageCount;
 
   return (
     <Tabs
@@ -30,7 +35,16 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          tabBarIcon: ({ color }) => <HomeIcon color={color} />,
+          tabBarIcon: ({ color }) => (
+            <View style={{ position: 'relative' }}>
+              <HomeIcon color={color} />
+              {totalBadge > 0 && (
+                <View style={{ position: 'absolute', top: -4, right: -6, backgroundColor: '#ef4444', borderRadius: 8, minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3 }}>
+                  <Text style={{ color: '#fff', fontSize: 9, fontWeight: 'bold' }}>{totalBadge > 99 ? '99+' : totalBadge}</Text>
+                </View>
+              )}
+            </View>
+          ),
         }}
       />
       <Tabs.Screen

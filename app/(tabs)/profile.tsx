@@ -63,7 +63,7 @@ const GridTile: React.FC<{ post: Post; onPress: () => void }> = React.memo(({ po
 // ─── Profile Screen ──────────────────────────────
 
 export default function ProfileScreen() {
-  const { userProfile, refreshAllData, addToast } = useApp();
+  const { userProfile, refreshAllData, addToast, followedUsernames } = useApp();
   const router = useRouter();
 
   const [activeTab, setActiveTab] = useState<TabType>('posts');
@@ -101,6 +101,10 @@ export default function ProfileScreen() {
   useEffect(() => {
     fetchAll();
   }, [fetchAll]);
+
+  useEffect(() => {
+    setFollowingCount(followedUsernames.size);
+  }, [followedUsernames]);
 
   // Realtime: own posts
   useEffect(() => {

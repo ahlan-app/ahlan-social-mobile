@@ -1,7 +1,7 @@
 
 import React, { createContext, useContext, useState, ReactNode, useCallback, useMemo, useEffect } from 'react';
 import type { User } from '@supabase/supabase-js';
-import { publishPost, deletePost, updatePost, supabase, toggleLike as apiToggleLike, toggleRepost as apiToggleRepost, addComment as apiAddComment, getFollowingList, unfollowUser, followUser, markNotificationsAsRead, getMyStories, deleteStoryFromDatabase, toggleStoryLikeInDatabase, markMessagesAsRead as apiMarkMessagesAsRead, toggleSavePost as apiToggleSavePost, adminDeletePost } from '../services/apiService';
+import { publishPost, deletePost, updatePost, supabase, toggleLike as apiToggleLike, toggleRepost as apiToggleRepost, addComment as apiAddComment, getFollowingList, unfollowUser, followUser, markNotificationsAsRead, getMyStories, deleteStoryFromDatabase, toggleStoryLikeInDatabase, markMessagesAsRead as apiMarkMessagesAsRead, toggleSavePost as apiToggleSavePost, adminDeletePost, ensureCurrentUserProfile } from '../services/apiService';
 import type { Comment, Post, Story, UserProfile, Toast, Notification, Message } from '../types';
 
 
@@ -263,13 +263,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     
     const syncUserData = useCallback(async (user: User) => {
         try {
+            await ensureCurrentUserProfile();
+
             // Use Promise.all to fetch profile, likes, reposts, follows, and stories concurrently for better performance.
             const [profileResult, likesResult, repostsResult, savedPostsResult, followingResult, myStoriesResult, storyLikesResult, unreadMessagesResult] = await Promise.all([
                 supabase
                     .from('profiles')
                     .select('full_name, username, avatar_url, is_verified, bio')
                     .eq('id', user.id)
-                    .single(),
+                    .maybeSingle(),
                 supabase.from('likes').select('post_id').eq('user_id', user.id),
                 supabase.from('reposts').select('post_id').eq('user_id', user.id),
                 supabase.from('saved_posts').select('post_id').eq('user_id', user.id),

@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, Link } from 'expo-router';
 import { supabase } from '../../services/supabase.native';
+import { ensureCurrentUserProfile } from '../../services/apiService';
 
 export default function LoginScreen() {
   const [identifier, setIdentifier] = useState('');
@@ -34,25 +35,39 @@ export default function LoginScreen() {
 
       // If identifier is not an email, assume it's a username and look up email
       if (!identifier.includes('@')) {
+        console.log('[Login] Looking up username:', identifier.toLowerCase());
         const { data, error: rpcError } = await supabase.rpc('get_email_by_username', {
           p_username: identifier.toLowerCase()
         });
 
+        console.log('[Login] RPC result:', { data, rpcError });
+
         if (rpcError || !data) {
-          throw new Error('Username not found');
+          throw new Error(rpcError?.message || 'Username not found');
         }
         email = data;
       }
 
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
+      console.log('[Login] Attempting signIn with email:', JSON.stringify(email), 'password length:', password.length);
+      console.log('[Login] Supabase URL:', (supabase as any).supabaseUrl || (supabase as any).restUrl);
+
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password: password,
       });
 
+      console.log('[Login] signIn result:', { user: signInData?.user?.id, signInError });
+
       if (signInError) throw signInError;
-      
+
+      const profileReady = await ensureCurrentUserProfile();
+      if (!profileReady) {
+        console.warn('[Login] Profile row missing and auto-create failed. Some features may not work.');
+      }
+
       // router.replace('/(tabs)') handled by _layout's listener
     } catch (err: any) {
+      console.error('[Login] Error:', err);
       setError(err.message || 'An error occurred during login');
       setLoading(false);
     }
