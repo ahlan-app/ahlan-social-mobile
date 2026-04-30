@@ -21,6 +21,7 @@ import {
   getFollowerCount,
   getFollowingCount,
   setUserVerified,
+  reportUser,
 } from '../../services/apiService';
 import { supabase } from '../../services/supabase.native';
 import UserAvatar from '../../components/native/UserAvatar';
@@ -82,7 +83,6 @@ export default function UserProfileScreen() {
     isUserBlocked,
     toggleBlockUser,
     addToast,
-    showTopNotification,
     isAdmin,
   } = useApp();
 
@@ -208,13 +208,19 @@ export default function UserProfileScreen() {
     }
   };
 
-  const handleReport = (reason: string) => {
+  const handleReport = async (reason: string) => {
     setReportMenuVisible(false);
     setMenuVisible(false);
-    showTopNotification(
-      'Report Submitted',
-      `Thank you for your feedback. We will review the profile of @${username}.`,
-    );
+    if (!profile?.id) {
+      addToast('Unable to report — user not loaded.', 'error');
+      return;
+    }
+    const success = await reportUser(profile.id, reason);
+    if (success) {
+      addToast('Report submitted. Thank you for your feedback.', 'success');
+    } else {
+      addToast('Failed to submit report. Please try again.', 'error');
+    }
   };
 
   const handleToggleVerify = async () => {

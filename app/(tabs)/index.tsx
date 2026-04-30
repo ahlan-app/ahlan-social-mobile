@@ -300,8 +300,12 @@ export default function HomeFeedScreen() {
       post={item}
       onViewProfile={handleViewProfile}
       onViewComments={handleViewComments}
+      onViewLikers={(postId: string) => router.push({ pathname: '/user-list', params: { type: 'likes', postId, title: 'Likes' } })}
+      onViewReposters={(postId: string) => router.push({ pathname: '/user-list', params: { type: 'reposts', postId, title: 'Reposts' } })}
+      onSharePost={(post: Post) => router.push({ pathname: '/share-post', params: { id: post.id } })}
+      onEditPost={(post: Post) => router.push({ pathname: '/edit-post', params: { id: post.id } })}
     />
-  ), [handleViewProfile, handleViewComments]);
+  ), [handleViewProfile, handleViewComments, router]);
 
   const keyExtractor = useCallback((item: Post) => item.id, []);
 

@@ -1408,6 +1408,52 @@ export const getFollowingUsers = async (userId: string): Promise<SimpleUser[]> =
     return Array.from(uniqueUsers.values());
 };
 
+export const getPostLikers = async (postId: string): Promise<SimpleUser[]> => {
+    const { data, error } = await supabase
+        .from('likes')
+        .select('profiles!user_id(id, username, full_name, avatar_url, is_verified)')
+        .eq('post_id', postId);
+    if (error || !data) return [];
+    const uniqueUsers = new Map<string, SimpleUser>();
+    data.forEach((item: any) => {
+        const profile = Array.isArray(item?.profiles)
+            ? item.profiles[0]
+            : item?.profiles;
+        if (!profile?.id || uniqueUsers.has(profile.id)) return;
+        uniqueUsers.set(profile.id, {
+            id: profile.id,
+            username: profile.username,
+            name: profile.full_name || profile.username,
+            avatar: profile.avatar_url,
+            isVerified: profile.is_verified || false,
+        });
+    });
+    return Array.from(uniqueUsers.values());
+};
+
+export const getPostReposters = async (postId: string): Promise<SimpleUser[]> => {
+    const { data, error } = await supabase
+        .from('reposts')
+        .select('profiles!user_id(id, username, full_name, avatar_url, is_verified)')
+        .eq('post_id', postId);
+    if (error || !data) return [];
+    const uniqueUsers = new Map<string, SimpleUser>();
+    data.forEach((item: any) => {
+        const profile = Array.isArray(item?.profiles)
+            ? item.profiles[0]
+            : item?.profiles;
+        if (!profile?.id || uniqueUsers.has(profile.id)) return;
+        uniqueUsers.set(profile.id, {
+            id: profile.id,
+            username: profile.username,
+            name: profile.full_name || profile.username,
+            avatar: profile.avatar_url,
+            isVerified: profile.is_verified || false,
+        });
+    });
+    return Array.from(uniqueUsers.values());
+};
+
 export const followUser = async (follower_id: string, followed_id: string): Promise<void> => {
     const { data: existingFollow, error: existingError } = await supabase
         .from('follows')
@@ -1542,12 +1588,48 @@ export const toggleCommentLike = async (commentId: string): Promise<boolean> => 
 // =========================================================
 
 export const getAllHashtags = async (): Promise<Hashtag[]> => {
-    // Mock data as there's no hashtags table
-    return [
-        { tag: 'ReactJS', postCount: 152 },
-        { tag: 'WebDev', postCount: 98 },
-        { tag: 'AhlanApp', postCount: 50 },
-    ];
+    // Fetch recent posts and extract hashtags from their content,
+    // then aggregate counts on the client side.
+    // We limit to 500 recent posts to keep the query lightweight.
+    const { data, error } = await supabase
+        .from('posts')
+        .select('content')
+        .not('content', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(500);
+
+    if (error) {
+        console.error('Error fetching posts for hashtags:', error.message);
+        return [];
+    }
+
+    if (!data || data.length === 0) return [];
+
+    // Extract hashtags (#word patterns) from each post's content
+    const hashtagCounts: Record<string, number> = {};
+    const hashtagRegex = /#(\w+)/g;
+
+    for (const post of data) {
+        if (!post.content) continue;
+        let match: RegExpExecArray | null;
+        hashtagRegex.lastIndex = 0;
+        const seenInPost: Record<string, boolean> = {};
+        while ((match = hashtagRegex.exec(post.content)) !== null) {
+            const tag = match[1];
+            // Count each tag only once per post
+            if (!seenInPost[tag]) {
+                seenInPost[tag] = true;
+                hashtagCounts[tag] = (hashtagCounts[tag] || 0) + 1;
+            }
+        }
+    }
+
+    // Convert to Hashtag array sorted by postCount descending
+    const hashtags: Hashtag[] = Object.entries(hashtagCounts)
+        .map(([tag, postCount]) => ({ tag, postCount }))
+        .sort((a, b) => b.postCount - a.postCount);
+
+    return hashtags;
 };
 
 export const searchUsers = async (query: string): Promise<any[]> => {
@@ -1718,6 +1800,48 @@ export const deleteConversationForBothSides = async (myId: string, otherId: stri
     });
     if (error) {
         console.error("Error deleting conversation:", error);
+        return false;
+    }
+    return true;
+};
+
+// --- REPORT FUNCTIONS ---
+
+export const reportPost = async (postId: string, reason: string): Promise<boolean> => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return false;
+
+    const { error } = await supabase.from('reports').insert([
+        {
+            reporter_id: user.id,
+            target_type: 'post',
+            target_id: postId,
+            reason,
+        },
+    ]);
+
+    if (error) {
+        console.error('Error reporting post:', error.message || error);
+        return false;
+    }
+    return true;
+};
+
+export const reportUser = async (userId: string, reason: string): Promise<boolean> => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return false;
+
+    const { error } = await supabase.from('reports').insert([
+        {
+            reporter_id: user.id,
+            target_type: 'user',
+            target_id: userId,
+            reason,
+        },
+    ]);
+
+    if (error) {
+        console.error('Error reporting user:', error.message || error);
         return false;
     }
     return true;

@@ -3,15 +3,16 @@ import { View, Text, FlatList, Pressable, ActivityIndicator } from 'react-native
 import { Stack, useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useApp } from '../store/AppContext.native';
-import { getFollowerUsers, getFollowingUsers } from '../services/apiService';
+import { getFollowerUsers, getFollowingUsers, getPostLikers, getPostReposters } from '../services/apiService';
 import UserAvatar from '../components/native/UserAvatar';
 import { VerifiedIcon } from '../components/native/Icons';
 import type { SimpleUser } from '../types';
 
 export default function UserListScreen() {
-  const { type, userId, title } = useLocalSearchParams<{
+  const { type, userId, postId, title } = useLocalSearchParams<{
     type: 'followers' | 'following' | 'likes' | 'reposts';
-    userId: string;
+    userId?: string;
+    postId?: string;
     title: string;
   }>();
   const router = useRouter();
@@ -28,12 +29,15 @@ export default function UserListScreen() {
       setLoading(true);
       try {
         let result: SimpleUser[] = [];
-        if (type === 'followers') {
+        if (type === 'followers' && userId) {
           result = await getFollowerUsers(userId);
-        } else if (type === 'following') {
+        } else if (type === 'following' && userId) {
           result = await getFollowingUsers(userId);
+        } else if (type === 'likes' && postId) {
+          result = await getPostLikers(postId);
+        } else if (type === 'reposts' && postId) {
+          result = await getPostReposters(postId);
         }
-        // likes/reposts: API not implemented, show empty
         if (!cancelled) {
           setUsers(result);
         }
@@ -46,7 +50,7 @@ export default function UserListScreen() {
 
     fetchUsers();
     return () => { cancelled = true; };
-  }, [type, userId]);
+  }, [type, userId, postId]);
 
   const withPendingUsername = useCallback((username: string, add: boolean) => {
     const key = username.trim().toLowerCase();

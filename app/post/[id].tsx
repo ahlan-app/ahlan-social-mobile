@@ -120,6 +120,10 @@ export default function PostDetailScreen() {
           post={post}
           onViewProfile={(username) => router.push(`/user/${username}`)}
           onViewComments={(postId) => router.push(`/comments/${postId}`)}
+          onViewLikers={(postId) => router.push({ pathname: '/user-list', params: { type: 'likes', postId, title: 'Likes' } })}
+          onViewReposters={(postId) => router.push({ pathname: '/user-list', params: { type: 'reposts', postId, title: 'Reposts' } })}
+          onSharePost={(p) => router.push({ pathname: '/share-post', params: { id: p.id } })}
+          onEditPost={(p) => router.push({ pathname: '/edit-post', params: { id: p.id } })}
         />
       </ScrollView>
     </SafeAreaView>

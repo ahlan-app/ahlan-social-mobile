@@ -17,7 +17,9 @@ import {
   ShareIOSIcon,
   ReportIcon,
   ArrowLeftIcon,
+  PencilAltIcon,
 } from './Icons';
+import { reportPost } from '../../services/apiService';
 import type { Post } from '../../types';
 
 // ─── Helpers ───────────────────────────────────────
@@ -51,6 +53,7 @@ interface PostCardProps {
   post: Post;
   isStoryVersion?: boolean;
   onDelete?: (postId: string) => void;
+  onEditPost?: (post: Post) => void;
   onViewProfile?: (username: string, avatar?: string | null) => void;
   onViewComments?: (postId: string) => void;
   onViewLikers?: (postId: string) => void;
@@ -68,11 +71,12 @@ const PostHeader: React.FC<{
   isImage: boolean;
   onViewProfile: () => void;
   onDelete: () => void;
+  onEditPost?: () => void;
   isPreview?: boolean;
-}> = React.memo(({ post, isMyPost, isTextOnly, isImage, onViewProfile, onDelete, isPreview }) => {
+}> = React.memo(({ post, isMyPost, isTextOnly, isImage, onViewProfile, onDelete, onEditPost, isPreview }) => {
   const [menuVisible, setMenuVisible] = useState(false);
   const [showReport, setShowReport] = useState(false);
-  const { addToast, showTopNotification, isAdmin } = useApp();
+  const { addToast, isAdmin } = useApp();
 
   const reportReasons = [
     "It's spam",
@@ -85,10 +89,15 @@ const PostHeader: React.FC<{
 
   const textColor = isTextOnly || isImage ? 'text-white' : 'text-white';
 
-  const handleReport = (reason: string) => {
+  const handleReport = async (reason: string) => {
     setMenuVisible(false);
     setShowReport(false);
-    showTopNotification('Report Submitted', 'Thank you for your feedback.');
+    const success = await reportPost(post.id, reason);
+    if (success) {
+      addToast('Report submitted. Thank you for your feedback.', 'success');
+    } else {
+      addToast('Failed to submit report. Please try again.', 'error');
+    }
   };
 
   return (
@@ -144,13 +153,24 @@ const PostHeader: React.FC<{
               <View className="pt-4">
                 <View className="w-10 h-1 bg-gray-700 rounded-full self-center mb-4" />
                 {(isMyPost || isAdmin) ? (
-                  <Pressable
-                    onPress={() => { setMenuVisible(false); onDelete(); }}
-                    className="flex-row items-center px-6 py-4"
-                  >
-                    <TrashIcon color="#ef4444" size={20} />
-                    <Text className="text-red-500 text-base ml-3">Delete Post</Text>
-                  </Pressable>
+                  <>
+                    {isMyPost && post.media_type === 'text' && onEditPost && (
+                      <Pressable
+                        onPress={() => { setMenuVisible(false); onEditPost(); }}
+                        className="flex-row items-center px-6 py-4"
+                      >
+                        <PencilAltIcon color="#3b82f6" size={20} />
+                        <Text className="text-blue-400 text-base ml-3">Edit Post</Text>
+                      </Pressable>
+                    )}
+                    <Pressable
+                      onPress={() => { setMenuVisible(false); onDelete(); }}
+                      className="flex-row items-center px-6 py-4"
+                    >
+                      <TrashIcon color="#ef4444" size={20} />
+                      <Text className="text-red-500 text-base ml-3">Delete Post</Text>
+                    </Pressable>
+                  </>
                 ) : (
                   <Pressable
                     onPress={() => setShowReport(true)}
@@ -198,6 +218,7 @@ const PostCard: React.FC<PostCardProps> = ({
   post,
   isStoryVersion = false,
   onDelete,
+  onEditPost,
   onViewProfile,
   onViewComments,
   onViewLikers,
@@ -355,6 +376,7 @@ const PostCard: React.FC<PostCardProps> = ({
             isImage={isImage}
             onViewProfile={handleViewProfile}
             onDelete={handleDelete}
+            onEditPost={onEditPost ? () => onEditPost(post) : undefined}
             isPreview={isPreview}
           />
         </View>
@@ -446,6 +468,7 @@ const PostCard: React.FC<PostCardProps> = ({
               {/* Like */}
               <Pressable
                 onPress={handleLike}
+                onLongPress={() => onViewLikers?.(post.id)}
                 disabled={isLiking}
                 className="flex-row items-center"
                 hitSlop={6}
@@ -467,6 +490,7 @@ const PostCard: React.FC<PostCardProps> = ({
               {/* Repost */}
               <Pressable
                 onPress={handleRepost}
+                onLongPress={() => onViewReposters?.(post.id)}
                 disabled={isReposting}
                 className="flex-row items-center"
                 hitSlop={6}
