@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, ReactNode, useCallback, useMemo, useEffect } from 'react';
 import type { User } from '@supabase/supabase-js';
-import { publishPost, deletePost, updatePost, toggleLike as apiToggleLike, toggleRepost as apiToggleRepost, addComment as apiAddComment, getFollowingList, unfollowUser, followUser, markNotificationsAsRead, getMyStories, deleteStoryFromDatabase, toggleStoryLikeInDatabase, markMessagesAsRead as apiMarkMessagesAsRead, toggleSavePost as apiToggleSavePost, adminDeletePost, ensureCurrentUserProfile } from '../services/apiService';
+import { publishPost, deletePost, updatePost, toggleLike as apiToggleLike, toggleRepost as apiToggleRepost, addComment as apiAddComment, getFollowingList, unfollowUser, followUser, markNotificationsAsRead, getMyStories, deleteStoryFromDatabase, toggleStoryLikeInDatabase, markMessagesAsRead as apiMarkMessagesAsRead, toggleSavePost as apiToggleSavePost, adminDeletePost, ensureCurrentUserProfile, uploadMedia } from '../services/apiService';
 import { supabase } from '../services/supabase.native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
@@ -589,10 +589,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const areCommentsLoaded = useCallback((postId: string) => state.postComments.has(postId), [state.postComments]);
 
     const addProfilePost = useCallback(async (post: Post) => {
-        // This function is now fire-and-forget. The UI will be updated
-        // by the real-time listener in HomeTab / ProfileTab.
+        // Upload local media to Supabase Storage before creating the post.
+        // This ensures other users can see the image (local file:// URIs are only visible on the sender's device).
+        const isLocalUri = (uri: string) =>
+            uri.startsWith('file://') || uri.startsWith('content://') || uri.startsWith('blob:') || uri.startsWith('data:');
+
         try {
-            const realPost = await publishPost(post);
+            let postToPublish = { ...post };
+
+            if (postToPublish.media && isLocalUri(postToPublish.media)) {
+                const { data: { user } } = await supabase.auth.getUser();
+                if (!user) {
+                    throw new Error('You must be logged in to upload media.');
+                }
+                const publicUrl = await uploadMedia(postToPublish.media, user.id);
+                postToPublish.media = publicUrl;
+            }
+
+            const realPost = await publishPost(postToPublish);
             if (!realPost) {
                 throw new Error("API returned null post.");
             }

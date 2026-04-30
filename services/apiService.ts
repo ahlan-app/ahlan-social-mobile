@@ -263,13 +263,79 @@ async function handleMentions(content: string, sender_id: string, post_id: strin
   }
 }
 
-// Helper to convert blob/data URLs to a Blob object for uploading
+// Helper to convert blob/data URLs to a Blob object for uploading (web-only)
 async function localUrlToBlob(url: string): Promise<Blob> {
     const response = await fetch(url);
     if (!response.ok) {
         throw new Error(`Failed to fetch local URL: ${response.statusText}`);
     }
     return response.blob();
+}
+
+/**
+ * Upload a local media file (from expo-image-picker or camera) to Supabase Storage.
+ * Uses fetch().arrayBuffer() which works reliably on React Native.
+ * Returns the public URL of the uploaded file.
+ */
+export async function uploadMedia(localUri: string, userId: string): Promise<string> {
+    // Fetch the local file as an ArrayBuffer — this works on RN for file:// and content:// URIs
+    const response = await fetch(localUri);
+    if (!response.ok) {
+        throw new Error(`Failed to read local file: ${response.status} ${response.statusText}`);
+    }
+    const arrayBuffer = await response.arrayBuffer();
+
+    // Determine content type from URI extension
+    const uriLower = localUri.toLowerCase();
+    let contentType = 'image/jpeg'; // default
+    let ext = 'jpg';
+    if (uriLower.endsWith('.png')) { contentType = 'image/png'; ext = 'png'; }
+    else if (uriLower.endsWith('.webp')) { contentType = 'image/webp'; ext = 'webp'; }
+    else if (uriLower.endsWith('.gif')) { contentType = 'image/gif'; ext = 'gif'; }
+    else if (uriLower.endsWith('.mp4')) { contentType = 'video/mp4'; ext = 'mp4'; }
+    else if (uriLower.endsWith('.mov')) { contentType = 'video/quicktime'; ext = 'mov'; }
+
+    const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+
+    // Try uploading to the 'post-media' bucket first (same bucket the web app uses)
+    const candidatePaths = [
+        `${userId}/posts/${fileName}`,
+        `posts/${userId}/${fileName}`,
+        `public/${userId}/${fileName}`,
+    ];
+
+    const bucketCandidates = ['post-media', 'media', 'uploads'];
+
+    let lastError: unknown = null;
+
+    for (const bucket of bucketCandidates) {
+        for (const filePath of candidatePaths) {
+            const { error } = await supabase.storage
+                .from(bucket)
+                .upload(filePath, arrayBuffer, {
+                    cacheControl: '3600',
+                    upsert: false,
+                    contentType,
+                });
+
+            if (!error) {
+                const { data } = supabase.storage.from(bucket).getPublicUrl(filePath);
+                return data.publicUrl;
+            }
+
+            lastError = error;
+            // If it's not a policy/bucket error, throw immediately
+            if (!isLikelyStoragePolicyError(error) && !isStorageBucketMissingError(error)) {
+                throw error;
+            }
+            // If it's a bucket-missing error for this bucket, try next bucket
+            if (isStorageBucketMissingError(error)) {
+                break; // skip remaining paths for this bucket, try next bucket
+            }
+        }
+    }
+
+    throw lastError || new Error('Media upload failed: could not upload to any storage bucket.');
 }
 
 const toStorageExtension = (mimeType: string | undefined, fallback: string = 'bin'): string => {
@@ -430,20 +496,9 @@ export const publishPost = async (post: Post): Promise<Post | null> => {
 
         // --- NEW UPLOAD LOGIC ---
         // If the media is a local URL (from camera or gallery), upload it to storage first.
-        if (uploadUrl && (uploadUrl.startsWith('blob:') || uploadUrl.startsWith('data:') || uploadUrl.startsWith('file://'))) {
-            const blob = await localUrlToBlob(uploadUrl);
-            const filePath = await uploadToPostMediaBucket(blob, user.id, 'posts');
-
-            // Get the permanent public URL for the uploaded file.
-            const { data: publicUrlData } = supabase.storage
-                .from('post-media')
-                .getPublicUrl(filePath);
-            
-            if (!publicUrlData) {
-                throw new Error("Could not get public URL for the uploaded file.");
-            }
-            
-            uploadUrl = publicUrlData.publicUrl; // Replace local URL with permanent public URL.
+        if (uploadUrl && (uploadUrl.startsWith('blob:') || uploadUrl.startsWith('data:') || uploadUrl.startsWith('file://') || uploadUrl.startsWith('content://'))) {
+            // Use the RN-compatible uploadMedia function which uses arrayBuffer
+            uploadUrl = await uploadMedia(uploadUrl, user.id);
         }
         // --- END NEW UPLOAD LOGIC ---
 
