@@ -326,7 +326,7 @@ const ProfileTab: React.FC<ProfileTabProps> = ({ onViewProfile, onLogout, onView
                                                 onClick={() => onViewPost(posts, post)}
                                                 className="aspect-square bg-gray-800 focus:outline-none relative group"
                                             >
-                                                {(post.media_type === 'image' || post.media_type === 'video') && gridImageSrc ? (
+                                                {(post.media_type === 'image' || (post.media_type as string) === 'video') && gridImageSrc ? (
                                                     <img src={gridImageSrc} alt="Post media" className="w-full h-full object-cover" loading="lazy" />
                                                 ) : (
                                                     <div className="w-full h-full p-2 flex flex-col justify-center bg-gradient-to-br from-gray-700 to-gray-800">
@@ -371,7 +371,7 @@ const ProfileTab: React.FC<ProfileTabProps> = ({ onViewProfile, onLogout, onView
                                                 onClick={() => onViewPost(reposts, post)}
                                                 className="aspect-square bg-gray-800 focus:outline-none relative group"
                                             >
-                                                {(post.media_type === 'image' || post.media_type === 'video') && gridImageSrc ? (
+                                                {(post.media_type === 'image' || (post.media_type as string) === 'video') && gridImageSrc ? (
                                                     <img src={gridImageSrc} alt="Post media" className="w-full h-full object-cover" loading="lazy" />
                                                 ) : (
                                                     <div className="w-full h-full p-2 flex flex-col justify-center bg-gradient-to-br from-gray-700 to-gray-800">
@@ -416,7 +416,7 @@ const ProfileTab: React.FC<ProfileTabProps> = ({ onViewProfile, onLogout, onView
                                                 onClick={() => onViewPost(savedPostsList, post)}
                                                 className="aspect-square bg-gray-800 focus:outline-none relative group"
                                             >
-                                                {(post.media_type === 'image' || post.media_type === 'video') && gridImageSrc ? (
+                                                {(post.media_type === 'image' || (post.media_type as string) === 'video') && gridImageSrc ? (
                                                     <img src={gridImageSrc} alt="Post media" className="w-full h-full object-cover" loading="lazy" />
                                                 ) : (
                                                     <div className="w-full h-full p-2 flex flex-col justify-center bg-gradient-to-br from-gray-700 to-gray-800">

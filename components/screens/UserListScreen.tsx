@@ -27,7 +27,7 @@ const UserRow: React.FC<{ user: SimpleUser; onViewProfile: (username: string, av
 
     return (
         <div className="flex items-center space-x-4 p-3 hover:bg-gray-900 transition-colors border-b border-gray-800">
-            <button onClick={() => onViewProfile(user.username, user.avatar)} className="flex items-center space-x-4 flex-1">
+            <button onClick={() => onViewProfile(user.username, user.avatar ?? undefined)} className="flex items-center space-x-4 flex-1">
                 <UserAvatar username={user.username} avatarUrl={user.avatar} className="w-12 h-12 rounded-full" />
                 <div className="text-left">
                     <div className="flex items-center space-x-1.5">

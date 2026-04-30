@@ -1,8 +1,0 @@
-{
-  "name": "Ahlan.social60",
-  "description": "A modern social media web application inspired by popular platforms, allowing users to view timelines, post updates, interact with content, and share stories. It features a sleek, dark-themed interface built with React and Tailwind CSS.",
-  "requestFramePermissions": [
-    "camera",
-    "microphone"
-  ]
-}

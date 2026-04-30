@@ -3,6 +3,7 @@ import React, { createContext, useContext, useState, ReactNode, useCallback, use
 import type { User } from '@supabase/supabase-js';
 import { publishPost, deletePost, updatePost, supabase, toggleLike as apiToggleLike, toggleRepost as apiToggleRepost, addComment as apiAddComment, getFollowingList, unfollowUser, followUser, markNotificationsAsRead, getMyStories, deleteStoryFromDatabase, toggleStoryLikeInDatabase, markMessagesAsRead as apiMarkMessagesAsRead, toggleSavePost as apiToggleSavePost, adminDeletePost, ensureCurrentUserProfile } from '../services/apiService';
 import type { Comment, Post, Story, UserProfile, Toast, Notification, Message } from '../types';
+import { normalizeNotifications } from '../types';
 
 
 interface AppState {
@@ -170,7 +171,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             } else {
                  setState(prev => ({
                     ...prev,
-                    notifications: (data || []) as Notification[]
+                    notifications: normalizeNotifications(data || [])
                 }));
             }
         
@@ -950,7 +951,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         } else {
             setState((prev: AppState) => ({
                 ...prev,
-                notifications: (data || []) as Notification[],
+                notifications: normalizeNotifications(data || []),
             }));
         }
       }

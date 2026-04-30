@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
+// @ts-ignore - react-dom types may not be installed in RN web builds
 import { createPortal } from 'react-dom';
 import { useApp } from '../store/AppContext';
 

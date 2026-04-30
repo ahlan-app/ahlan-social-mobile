@@ -208,7 +208,7 @@ const CommentItem: React.FC<CommentItemProps> = ({ comment, onDelete, currentUse
     };
     
     const handleViewProfile = () => {
-        onViewProfile(comment.username, comment.avatar);
+        onViewProfile(comment.username, comment.avatar ?? undefined);
     };
 
     return (

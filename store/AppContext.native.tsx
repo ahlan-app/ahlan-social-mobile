@@ -5,6 +5,7 @@ import { supabase } from '../services/supabase.native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import type { Comment, Post, Story, UserProfile, Toast, Notification, Message } from '../types';
+import { normalizeNotifications } from '../types';
 
 
 interface AppState {
@@ -171,7 +172,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             } else {
                  setState(prev => ({
                     ...prev,
-                    notifications: (data || []) as Notification[]
+                    notifications: normalizeNotifications(data || [])
                 }));
             }
 
@@ -943,7 +944,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         } else {
             setState((prev: AppState) => ({
                 ...prev,
-                notifications: (data || []) as Notification[],
+                notifications: normalizeNotifications(data || []),
             }));
         }
       }

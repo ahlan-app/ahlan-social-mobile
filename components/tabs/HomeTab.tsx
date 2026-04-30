@@ -303,7 +303,7 @@ const HomeTab: React.FC<HomeTabProps> = ({ scrollContainerRef, onRefreshStories,
         if (container) {
             // FIX: Use a for...of loop to ensure `child` is correctly typed as an Element.
             // This resolves an issue where `child` was being inferred as `unknown` or `{}`.
-            for (const child of container.children) {
+            for (const child of Array.from(container.children)) {
                 if (child.getAttribute('data-postid')) {
                     observer.observe(child);
                 }

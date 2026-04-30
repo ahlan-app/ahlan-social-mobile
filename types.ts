@@ -48,36 +48,63 @@ export interface Post {
     timestamp?: string;
 }
 
+export interface NotificationSender {
+    id: string;
+    username: string;
+    avatar_url: string | null;
+}
+
+export interface NotificationPost {
+    id: string;
+    content: string;
+    media: string | null;
+    media_type: 'text' | 'image';
+}
+
+export interface NotificationComment {
+    id: string;
+    text: string;
+}
+
+export interface NotificationStory {
+    id: string;
+    media_url: string;
+}
+
 export interface Notification {
     id: string;
     type: 'like' | 'comment' | 'follow' | 'comment_like' | 'repost' | 'mention' | 'story_like';
     is_read: boolean;
     created_at: string;
     content?: string | null;
-    sender: {
-        id: string;
-        username: string;
-        avatar_url: string | null;
-    };
+    sender: NotificationSender;
     user?: {
         id: string;
         username: string;
     } | null;
-    post: {
-        id: string;
-        content: string;
-        media: string | null;
-        media_type: 'text' | 'image';
-    } | null;
+    post: NotificationPost | null;
     comment_id?: string | null;
-    comment?: {
-        id: string;
-        text: string;
-    } | null;
-    story?: {
-        id: string;
-        media_url: string;
-    } | null;
+    comment?: NotificationComment | null;
+    story?: NotificationStory | null;
+}
+
+// Supabase returns foreign-key joins as arrays; use this helper to normalize.
+export function normalizeNotification(n: any): Notification {
+    const sender = Array.isArray(n.sender) ? n.sender[0] : n.sender;
+    const post = Array.isArray(n.post) ? n.post[0] : n.post;
+    const comment = Array.isArray(n.comment) ? n.comment[0] : n.comment;
+    const story = Array.isArray(n.story) ? n.story[0] : n.story;
+    return {
+        ...n,
+        sender: sender ?? { id: '', username: '', avatar_url: null },
+        post: post ?? null,
+        comment: comment ?? null,
+        story: story ?? null,
+    } as Notification;
+}
+
+export function normalizeNotifications(data: any[]): Notification[] {
+    return (data || []).map(normalizeNotification);
 }
 
 export interface Comment {

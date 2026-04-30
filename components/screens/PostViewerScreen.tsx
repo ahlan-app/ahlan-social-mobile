@@ -8,7 +8,7 @@ interface PostViewerScreenProps {
     posts: Post[];
     initialPostId: string;
     close: () => void;
-    onViewProfile: (username: string, avatar?: string) => void;
+    onViewProfile: (username: string, avatar?: string | null) => void;
     onViewComments: (postId: string) => void;
     onEditPost: (post: Post) => void;
     onViewLikers: (postId: string) => void;
@@ -22,7 +22,7 @@ const PostViewerScreen: React.FC<PostViewerScreenProps> = ({ posts, initialPostI
     const [showOptionsMenu, setShowOptionsMenu] = useState(false);
     
     const optionsMenuRef = useRef<HTMLDivElement>(null);
-    const postRefs = useRef<Map<string, HTMLDivElement | null>>(new Map());
+    const postRefs = useRef<Map<string, any>>(new Map());
     const containerRef = useRef<HTMLDivElement>(null);
     const observer = useRef<IntersectionObserver | null>(null);
 
@@ -138,7 +138,7 @@ const PostViewerScreen: React.FC<PostViewerScreenProps> = ({ posts, initialPostI
                 {posts.map(post => (
                     <div 
                         key={post.id} 
-                        ref={el => postRefs.current.set(post.id, el)} 
+                        ref={el => { postRefs.current.set(post.id, el); }} 
                         data-postid={post.id}
                         className="py-2"
                     >

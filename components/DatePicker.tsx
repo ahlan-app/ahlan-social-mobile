@@ -16,7 +16,7 @@ interface WheelProps {
 const Wheel: React.FC<WheelProps> = ({ items, value, onChange, className }) => {
     const wheelRef = useRef<HTMLDivElement>(null);
     // FIX: Replaced 'NodeJS.Timeout' with 'number' for browser compatibility as 'setTimeout' returns a number in web environments.
-    const scrollTimeout = useRef<number>();
+    const scrollTimeout = useRef<number | undefined>(undefined);
     const [isInteracting, setIsInteracting] = useState(false);
     
     const currentIndex = useMemo(() => items.findIndex(item => String(item) === String(value)), [items, value]);

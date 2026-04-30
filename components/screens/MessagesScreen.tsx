@@ -133,7 +133,7 @@ const MessagesScreen: React.FC<MessagesScreenProps> = ({ close, onViewProfile, i
     const [replyingTo, setReplyingTo] = useState<Message | null>(null);
     const chatEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
-    const messageRefs = useRef<Map<string, HTMLDivElement | null>>(new Map());
+    const messageRefs = useRef<Map<string, any>>(new Map());
     const [internalItemToShare, setInternalItemToShare] = useState({ post: postToShare, user: userToShare });
     const { userProfile, addToast, markAllMessagesAsRead, markChatAsRead, unreadChats } = useApp();
     
@@ -515,7 +515,7 @@ const MessagesScreen: React.FC<MessagesScreenProps> = ({ close, onViewProfile, i
         return (
             <div className="fixed inset-0 bg-black z-40 flex flex-col h-screen">
                 <header className="bg-black border-b border-gray-800 p-2 flex items-center justify-between flex-shrink-0 safe-pt">
-                    <button onClick={() => onViewProfile(chatWith.username, chatWith.avatar)} className="flex items-center space-x-3 pl-2 rounded-full hover:bg-gray-800 p-1">
+                    <button onClick={() => onViewProfile(chatWith.username, chatWith.avatar ?? undefined)} className="flex items-center space-x-3 pl-2 rounded-full hover:bg-gray-800 p-1">
                         <UserAvatar username={chatWith.username} avatarUrl={chatWith.avatar} className="w-10 h-10 rounded-full" />
                         <h1 className="text-xl font-bold">@{chatWith.username}</h1>
                     </button>
@@ -531,7 +531,7 @@ const MessagesScreen: React.FC<MessagesScreenProps> = ({ close, onViewProfile, i
                             const repliedMsgSenderUsername = msg.repliedMessage?.sender_id === userProfile.id ? userProfile.username : chatWith.username;
                             
                             return (
-                                <div key={msg.id} ref={el => messageRefs.current.set(msg.id, el)} className={`flex items-end gap-2 group ${isMyMessage ? 'justify-end' : 'justify-start'}`}>
+                                <div key={msg.id} ref={el => { messageRefs.current.set(msg.id, el); }} className={`flex items-end gap-2 group ${isMyMessage ? 'justify-end' : 'justify-start'}`}>
                                     <div 
                                         className={`max-w-xs lg:max-w-md py-2 px-3 rounded-2xl ${isMyMessage ? 'bg-blue-600 text-white rounded-br-none' : 'bg-gray-700 text-white rounded-bl-none'}`}
                                         onContextMenu={(e) => {
@@ -555,7 +555,7 @@ const MessagesScreen: React.FC<MessagesScreenProps> = ({ close, onViewProfile, i
                                         )}
                                         {msg.type === 'profile_share' && msg.sharedUser && (
                                             <div className="p-1">
-                                                <SharedUserPreview user={msg.sharedUser} onClick={() => onViewProfile(msg.sharedUser!.username, msg.sharedUser!.avatar)} onViewProfile={onViewProfile} />
+                                                <SharedUserPreview user={msg.sharedUser} onClick={() => onViewProfile(msg.sharedUser!.username, msg.sharedUser!.avatar ?? undefined)} onViewProfile={onViewProfile} />
                                             </div>
                                         )}
                                         {msg.type === 'story_reply' && msg.repliedStory && (
