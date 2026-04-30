@@ -2,7 +2,17 @@
   "name": "ahlan-social-app",
   "version": "1.0.0",
   "main": "expo-router/entry",
-  "description": "A modern social media mobile application built with Expo.",
+  "description": "Ahlan Social — Open-source social media app built with React Native, Expo, and Supabase",
+  "license": "MIT",
+  "author": "Samet Yilmaz Temel",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sametyilmaztemel/ahlan-social-mobile.git"
+  },
+  "homepage": "https://github.com/sametyilmaztemel/ahlan-social-mobile#readme",
+  "bugs": {
+    "url": "https://github.com/sametyilmaztemel/ahlan-social-mobile/issues"
+  },
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
