@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { Comment, UserProfile } from '../../types';
 // FIX: Import missing functions to fetch comment like status and count.
-import { cleanHtml, getCommentsForPost, toggleCommentLike, getCommentLikesCount, isCommentLikedByUser } from '../../services/apiService';
+import { cleanHtml, getCommentsForPost, toggleCommentLike, getCommentLikesCount, isCommentLikedByUser, deleteComment as apiDeleteComment } from '../../services/apiService';
 import { useApp } from '../../store/AppContext';
 import { formatDistanceToNow } from 'date-fns';
 import { HeartIcon, ArrowRightIcon, FlagIcon } from '../Icons';
@@ -62,8 +62,7 @@ const CommentsScreen: React.FC<CommentsScreenProps> = ({ postId, close, onViewPr
     };
 
     const handleDeleteComment = (commentId: string) => {
-        // Deleting comments via API is not implemented in this version.
-        // This function will perform a local-only delete.
+        // Optimistic local delete + API call
         const removeComment = (comments: Comment[], idToRemove: string): Comment[] => {
             return comments
                 .filter(comment => comment.id !== idToRemove)
@@ -76,6 +75,11 @@ const CommentsScreen: React.FC<CommentsScreenProps> = ({ postId, close, onViewPr
         const updatedComments = removeComment(localComments, commentId);
         setLocalComments(updatedComments);
         setComments(postId, updatedComments);
+
+        // Call API to delete from database
+        apiDeleteComment(commentId).catch(err => {
+            console.error('Failed to delete comment:', err);
+        });
     };
     
      const handleFlagSelect = (flagTextCode: string) => {

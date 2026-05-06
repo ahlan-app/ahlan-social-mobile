@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { Post, UserProfile as UserProfileType, SimpleUser, Story } from '../../types';
-import { getUserProfile, getUserPosts, getFollowerCount, getFollowingCount, supabase, getUserReposts, setUserVerified } from '../../services/apiService';
+import { getUserProfile, getUserPosts, getFollowerCount, getFollowingCount, supabase, getUserReposts, setUserVerified, reportUser } from '../../services/apiService';
 import { ArrowLeftIcon, ThreeDotsVerticalIcon, BlockIcon, VerifiedIcon, ShareIcon, ReportIcon } from '../Icons';
 import { useApp } from '../../store/AppContext';
 import RenderUserContent from '../RenderUserContent';
@@ -166,11 +166,20 @@ const UserProfileScreen: React.FC<UserProfileScreenProps> = ({ user, close, onVi
         "I just don't like their content"
     ];
 
-    const handleSelectReportReason = (reason: string) => {
+    const handleSelectReportReason = async (reason: string) => {
         if (!profile) return;
-        console.log(`User reported user: @${profile.username} for reason: ${reason}`);
         setMenuState('closed');
-        showTopNotification('Report Submitted', `Thank you for your feedback. We will review the profile of @${profile.username}.`);
+        try {
+            const success = await reportUser(profile.id, reason);
+            if (success) {
+                showTopNotification('Report Submitted', `Thank you for your feedback. We will review the profile of @${profile.username}.`);
+            } else {
+                showTopNotification('Report Failed', 'Could not submit report. Please try again.');
+            }
+        } catch (err) {
+            console.error('Report error:', err);
+            showTopNotification('Report Failed', 'An error occurred. Please try again.');
+        }
     };
 
     const handleRefresh = useCallback(async () => {

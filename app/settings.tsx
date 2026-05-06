@@ -29,32 +29,23 @@ export default function SettingsScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              const { data: { user } } = await supabase.auth.getUser();
-              if (!user) {
-                addToast('Not authenticated.', 'error');
+              // Call Supabase Edge Function for full account deletion
+              const { data, error } = await supabase.functions.invoke('delete-user-account', {
+                method: 'POST',
+              });
+
+              if (error || !data?.success) {
+                const msg = data?.error || error?.message || 'Unknown error';
+                console.error('Delete account failed:', msg);
+                addToast('Failed to delete account. Please try again.', 'error');
                 return;
               }
-              const userId = user.id;
-
-              // Delete user data from public tables
-              await Promise.all([
-                supabase.from('comments').delete().eq('user_id', userId),
-                supabase.from('likes').delete().eq('user_id', userId),
-                supabase.from('posts').delete().eq('user_id', userId),
-                supabase.from('follows').delete().or(`follower_id.eq.${userId},following_id.eq.${userId}`),
-                supabase.from('profiles').delete().eq('id', userId),
-              ]);
-
-              // TODO: For full auth user deletion, create a Supabase Edge Function
-              // that calls supabase.auth.admin.deleteUser() and invoke it here.
-              // Example: await supabase.rpc('delete_user_account');
-              // Until then, the auth record remains but all public data is removed.
 
               await supabase.auth.signOut();
-              addToast('Account data deleted. You have been signed out.', 'info');
+              addToast('Account permanently deleted. You have been signed out.', 'info');
             } catch (error) {
               console.error(error);
-              addToast('Failed to delete account data. Please try again.', 'error');
+              addToast('Failed to delete account. Please try again.', 'error');
             }
           },
         },
