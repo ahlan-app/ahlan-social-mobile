@@ -155,7 +155,7 @@ export default function HomeFeedScreen() {
 
   useEffect(() => {
     const channel = supabase
-      .channel('public:stories-home')
+      .channel(`public:stories-home-${Date.now()}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'stories' },
@@ -227,7 +227,7 @@ export default function HomeFeedScreen() {
 
   useEffect(() => {
     const channel = supabase
-      .channel('public:posts-home')
+      .channel(`public:posts-home-${Date.now()}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'posts' },

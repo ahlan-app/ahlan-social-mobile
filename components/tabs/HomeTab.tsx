@@ -201,7 +201,7 @@ const HomeTab: React.FC<HomeTabProps> = ({ scrollContainerRef, onRefreshStories,
 
     useEffect(() => {
         const subscription = supabase
-            .channel('public:posts-home')
+            .channel(`public:posts-home-${Date.now()}`)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'posts' }, handlePostUpdates)
             .subscribe();
         

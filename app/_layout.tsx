@@ -43,23 +43,21 @@ function RootLayoutNav() {
     }
   }, [fontsLoaded, fontError]);
 
-  // Auth routing
+  // Auth routing — registered once after fonts load, not on every navigation
   useEffect(() => {
-    const checkAuth = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      const inAuthGroup = segments[0] === '(auth)';
+    if (!fontsLoaded) return;
 
+    // Initial session check + redirect
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      const inAuthGroup = segments[0] === '(auth)';
       if (!session && !inAuthGroup) {
         router.replace('/(auth)/login');
       } else if (session && inAuthGroup) {
         router.replace('/(tabs)');
       }
-    };
+    });
 
-    if (fontsLoaded) {
-      checkAuth();
-    }
-
+    // Auth state change listener — registered ONCE
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN') {
         router.replace('/(tabs)');
@@ -71,7 +69,7 @@ function RootLayoutNav() {
     return () => {
       subscription.unsubscribe();
     };
-  }, [fontsLoaded, segments]);
+  }, [fontsLoaded]); // segments removed — listener is stable across navigations
 
   // Push notifications registration
   useEffect(() => {

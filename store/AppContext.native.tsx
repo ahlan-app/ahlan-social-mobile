@@ -196,7 +196,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             fetchUnreadData();
 
             messagesChannel = supabase
-                .channel('public:messages-realtime')
+                .channel(`public:messages-realtime-${userId}`)
                 .on(
                     'postgres_changes',
                     { event: '*', schema: 'public', table: 'messages' },
@@ -363,6 +363,36 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
             if (session?.user && (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'USER_UPDATED')) {
                 await syncUserData(session.user);
+            } else if (event === 'SIGNED_OUT') {
+                setState(prevState => ({
+                    ...prevState,
+                    likedPosts: new Set(),
+                    repostedPosts: new Set(),
+                    savedPosts: new Set(),
+                    postComments: new Map(),
+                    profilePosts: [],
+                    userProfile: {
+                        id: '',
+                        name: 'Ahlan User',
+                        username: 'ahlan_user',
+                        bio: 'Hello, I am using Ahlan',
+                        profilePicture: null,
+                    },
+                    userStories: [],
+                    storyComments: new Map(),
+                    likedStoryIds: new Set(),
+                    hasNewStory: false,
+                    viewedStoryTimestamps: new Set(),
+                    isViewingStory: false,
+                    likedVideoIds: new Set(),
+                    followedUsernames: new Set(),
+                    votedPolls: new Map(),
+                    notifications: null,
+                    unreadMessageCount: 0,
+                    unreadChats: new Set(),
+                    topNotification: null,
+                    isAdmin: false,
+                }));
             }
         });
 
