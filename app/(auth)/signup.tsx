@@ -208,7 +208,7 @@ export default function SignupScreen() {
             <View className="items-center mb-8">
               <Text
                 style={{ fontFamily: 'DancingScript_700Bold' }}
-                className="text-4xl text-blue-500"
+                className="text-4xl text-white"
               >
                 Create Account
               </Text>

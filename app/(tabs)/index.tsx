@@ -407,7 +407,7 @@ export default function HomeFeedScreen() {
     return (
       <SafeAreaView className="flex-1 bg-black">
         <View className="px-4 py-2 border-b border-gray-800 flex-row justify-between items-center">
-          <Text style={{ fontFamily: 'DancingScript_700Bold' }} className="text-2xl text-blue-500">
+          <Text style={{ fontFamily: 'DancingScript_700Bold' }} className="text-2xl text-white">
             Ahlan
           </Text>
           <View className="flex-row items-center" style={{ gap: 16 }}>
@@ -439,7 +439,7 @@ export default function HomeFeedScreen() {
   return (
     <SafeAreaView className="flex-1 bg-black">
       <View className="px-4 py-2 border-b border-gray-800 flex-row justify-between items-center">
-        <Text style={{ fontFamily: 'DancingScript_700Bold' }} className="text-2xl text-blue-500">
+        <Text style={{ fontFamily: 'DancingScript_700Bold' }} className="text-2xl text-white">
           Ahlan
         </Text>
         <View className="flex-row items-center" style={{ gap: 16 }}>

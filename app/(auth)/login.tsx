@@ -82,7 +82,7 @@ export default function LoginScreen() {
         <ScrollView contentContainerStyle={{ flexGrow: 1 }} className="px-6">
           <View className="flex-1 justify-center py-12">
             <View className="items-center mb-10">
-              <Text style={{ fontFamily: 'DancingScript_700Bold' }} className="text-5xl text-blue-500">
+              <Text style={{ fontFamily: 'DancingScript_700Bold' }} className="text-5xl text-white">
                 Ahlan
               </Text>
               <Text className="text-gray-400 mt-2 text-lg">Social Media App</Text>
