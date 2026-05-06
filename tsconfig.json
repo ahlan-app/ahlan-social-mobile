@@ -14,10 +14,11 @@
     "nativewind-env.d.ts"
   ],
   "exclude": [
-    "node_modules",
+    "supabase",
+    "service-worker.js",
     "dist",
     "index.html",
-    "service-worker.js",
-    "vite.config.ts"
+    "vite.config.ts",
+    "node_modules"
   ]
 }

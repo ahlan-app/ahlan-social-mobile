@@ -45,3 +45,8 @@ android/
 *.p12
 *.key
 *.mobileprovision
+# Android
+*.apk
+*.aab
+*.keystore
+local.properties

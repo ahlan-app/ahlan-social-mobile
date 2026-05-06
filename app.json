@@ -31,6 +31,8 @@
       "package": "com.ahlan.social",
       "permissions": [
         "CAMERA",
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO",
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE"
       ],
@@ -48,9 +50,16 @@
               "pathPrefix": "/"
             }
           ],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
-      ]
+      ],
+      "softwareKeyboardLayoutMode": "pan",
+      "allowBackup": true,
+      "googleServicesFile": "./google-services.json",
+      "blockedPermissions": []
     },
     "plugins": [
       "expo-router",
