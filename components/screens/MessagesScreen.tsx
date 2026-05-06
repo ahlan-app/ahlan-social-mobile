@@ -345,7 +345,7 @@ const MessagesScreen: React.FC<MessagesScreenProps> = ({ close, onViewProfile, i
         if (!chatWith?.id || !userProfile.id) return;
 
         const channel = supabase
-            .channel(`chat-with-${chatWith.id}`)
+            .channel(`chat-with-${chatWith.id}-${Date.now()}`)
             .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" },
                 (payload) => {
                     const newMessage = payload.new as Message;

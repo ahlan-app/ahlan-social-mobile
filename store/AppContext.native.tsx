@@ -196,7 +196,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             fetchUnreadData();
 
             messagesChannel = supabase
-                .channel(`public:messages-realtime-${userId}`)
+                .channel(`public:messages-realtime-${userId}-${Date.now()}`)
                 .on(
                     'postgres_changes',
                     { event: '*', schema: 'public', table: 'messages' },

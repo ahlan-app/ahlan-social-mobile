@@ -134,7 +134,7 @@ export default function UserProfileScreen() {
   useEffect(() => {
     if (!profile?.id) return;
     const channel = supabase
-      .channel(`user-profile-follows-${profile.id}`)
+      .channel(`user-profile-follows-${profile.id}-${Date.now()}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'follows' },

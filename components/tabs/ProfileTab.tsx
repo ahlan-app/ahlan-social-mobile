@@ -143,7 +143,7 @@ const ProfileTab: React.FC<ProfileTabProps> = ({ onViewProfile, onLogout, onView
         if (!userProfile.id) return;
 
         const subscription = supabase
-            .channel(`profile-posts-${userProfile.id}`)
+            .channel(`profile-posts-${userProfile.id}-${Date.now()}`)
             .on('postgres_changes', 
                 { event: '*', schema: 'public', table: 'posts', filter: `user_id=eq.${userProfile.id}` },
                 handlePostChange
@@ -170,7 +170,7 @@ const ProfileTab: React.FC<ProfileTabProps> = ({ onViewProfile, onLogout, onView
         };
 
         const followsSubscription = supabase
-            .channel(`profile-follows-${userProfile.id}`)
+            .channel(`profile-follows-${userProfile.id}-${Date.now()}`)
             .on(
                 'postgres_changes',
                 { event: '*', schema: 'public', table: 'follows' },

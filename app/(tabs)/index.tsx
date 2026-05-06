@@ -171,7 +171,7 @@ export default function HomeFeedScreen() {
   useEffect(() => {
     if (!userProfile?.id) return;
     const channel = supabase
-      .channel(`public:follows-home-${userProfile.id}`)
+      .channel(`public:follows-home-${userProfile.id}-${Date.now()}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'follows' },

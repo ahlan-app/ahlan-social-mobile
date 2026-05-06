@@ -131,7 +131,7 @@ const UserProfileScreen: React.FC<UserProfileScreenProps> = ({ user, close, onVi
         };
 
         const followsSubscription = supabase
-            .channel(`user-profile-follows-${profile.id}`)
+            .channel(`user-profile-follows-${profile.id}-${Date.now()}`)
             .on(
                 'postgres_changes',
                 { event: '*', schema: 'public', table: 'follows' },

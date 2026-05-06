@@ -110,7 +110,7 @@ export default function ProfileScreen() {
   useEffect(() => {
     if (!userProfile?.id) return;
     const channel = supabase
-      .channel(`profile-posts-${userProfile.id}`)
+      .channel(`profile-posts-${userProfile.id}-${Date.now()}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'posts', filter: `user_id=eq.${userProfile.id}` },
@@ -124,7 +124,7 @@ export default function ProfileScreen() {
   useEffect(() => {
     if (!userProfile?.id) return;
     const channel = supabase
-      .channel(`profile-follows-${userProfile.id}`)
+      .channel(`profile-follows-${userProfile.id}-${Date.now()}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'follows' },
