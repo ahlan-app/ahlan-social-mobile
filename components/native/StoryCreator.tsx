@@ -29,7 +29,7 @@ const StoryCreator: React.FC<StoryCreatorProps> = ({ onAddStory, onViewStories }
         accessibilityLabel={hasAnyStory ? 'View your story' : 'Add to your story'}
       >
         <AhlanIcon
-          color={hasAnyStory ? '#3b82f6' : '#ffffff'}
+          color="#ffffff"
           size={56}
         />
       </Pressable>
