@@ -3,16 +3,18 @@ import { View, Text, FlatList, Pressable, ActivityIndicator } from 'react-native
 import { Stack, useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useApp } from '../store/AppContext.native';
-import { getFollowerUsers, getFollowingUsers, getPostLikers, getPostReposters } from '../services/apiService';
+import { getFollowerUsers, getFollowingUsers, getPostLikers, getPostReposters, getStoryViewers } from '../services/apiService';
 import UserAvatar from '../components/native/UserAvatar';
 import { VerifiedIcon } from '../components/native/Icons';
 import type { SimpleUser } from '../types';
+import type { StoryViewer } from '../services/apiService';
 
 export default function UserListScreen() {
-  const { type, userId, postId, title } = useLocalSearchParams<{
-    type: 'followers' | 'following' | 'likes' | 'reposts';
+  const { type, userId, postId, storyId, title } = useLocalSearchParams<{
+    type: 'followers' | 'following' | 'likes' | 'reposts' | 'storyViews';
     userId?: string;
     postId?: string;
+    storyId?: string;
     title: string;
   }>();
   const router = useRouter();
@@ -37,6 +39,15 @@ export default function UserListScreen() {
           result = await getPostLikers(postId);
         } else if (type === 'reposts' && postId) {
           result = await getPostReposters(postId);
+        } else if (type === 'storyViews' && storyId) {
+          const viewers = await getStoryViewers(storyId);
+          result = viewers.map((v: StoryViewer) => ({
+            id: v.user_id,
+            username: v.username,
+            name: v.username,
+            avatar: v.avatar_url,
+            isVerified: false,
+          }));
         }
         if (!cancelled) {
           setUsers(result);
@@ -50,7 +61,7 @@ export default function UserListScreen() {
 
     fetchUsers();
     return () => { cancelled = true; };
-  }, [type, userId, postId]);
+  }, [type, userId, postId, storyId]);
 
   const withPendingUsername = useCallback((username: string, add: boolean) => {
     const key = username.trim().toLowerCase();

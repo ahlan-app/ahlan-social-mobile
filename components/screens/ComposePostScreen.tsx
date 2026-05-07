@@ -67,7 +67,7 @@ const CharacterCounter: React.FC<{ count: number }> = ({ count }) => {
 const ComposePostScreen: React.FC<ComposePostScreenProps> = ({ close }) => {
     const [content, setContent] = useState('');
     const [isPosting, setPosting] = useState(false);
-    const { addProfilePost, userProfile } = useApp();
+    const { addProfilePost, userProfile, addToast } = useApp();
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     
     const [isCreatingPoll, setIsCreatingPoll] = useState(false);
@@ -109,7 +109,6 @@ const ComposePostScreen: React.FC<ComposePostScreenProps> = ({ close }) => {
         if ((!hasContent && !hasValidPoll) || isPosting) return;
         
         setPosting(true);
-        await new Promise(resolve => setTimeout(resolve, 1000));
 
         const newPost: Post = {
             id: `post_${Date.now()}`,
@@ -130,9 +129,15 @@ const ComposePostScreen: React.FC<ComposePostScreenProps> = ({ close }) => {
             })
         };
 
-        addProfilePost(newPost);
-        setPosting(false);
-        close();
+        try {
+            await addProfilePost(newPost);
+            close();
+        } catch (error) {
+            console.error('Post creation failed:', error);
+            addToast('Failed to create post. Please try again.', 'error');
+        } finally {
+            setPosting(false);
+        }
     };
 
     const handleFlagSelect = (flagTextCode: string) => {

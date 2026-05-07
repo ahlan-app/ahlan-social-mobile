@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { View, Text, Pressable, Alert, StyleSheet } from 'react-native';
+import { View, Text, Pressable, Alert, StyleSheet, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -22,6 +22,7 @@ export default function CameraScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [facing, setFacing] = useState<'front' | 'back'>('back');
   const [capturing, setCapturing] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   const toggleFacing = useCallback(() => {
     triggerHapticFeedback('light');
@@ -29,7 +30,7 @@ export default function CameraScreen() {
   }, [triggerHapticFeedback]);
 
   const handleUploadStory = useCallback(async (uri: string) => {
-    if (!userProfile?.id) return;
+    if (!userProfile?.id || uploading) return;
 
     const localId = `local-${Date.now()}`;
     const localStory: Story = {
@@ -42,8 +43,8 @@ export default function CameraScreen() {
     };
 
     addUserStory(localStory);
+    setUploading(true);
     addToast('Uploading story...', 'info');
-    router.navigate('/(tabs)');
 
     try {
       const response = await fetch(uri);
@@ -54,7 +55,7 @@ export default function CameraScreen() {
       const realStory = await uploadStory(uploadBlob, null, userProfile.id);
       if (realStory) {
         replaceStory(localId, realStory);
-        addToast('Story shared!', 'success');
+        addToast('Story shared! ✨', 'success');
       } else {
         deleteStory(localId);
         addToast('Failed to upload story.', 'error');
@@ -63,8 +64,12 @@ export default function CameraScreen() {
       console.error('Story upload failed', error);
       deleteStory(localId);
       addToast('Failed to upload story.', 'error');
+    } finally {
+      setUploading(false);
+      // Small delay so toast is visible
+      setTimeout(() => router.navigate('/(tabs)'), 1000);
     }
-  }, [userProfile, addUserStory, replaceStory, deleteStory, addToast, router]);
+  }, [userProfile, uploading, addUserStory, replaceStory, deleteStory, addToast, router]);
 
   const takePhoto = useCallback(async () => {
     if (!cameraRef.current || capturing) return;
@@ -165,6 +170,14 @@ export default function CameraScreen() {
         style={StyleSheet.absoluteFill}
         facing={facing}
       />
+
+      {/* Uploading overlay */}
+      {uploading && (
+        <View className="absolute inset-0 bg-black/70 z-20 items-center justify-center">
+          <ActivityIndicator size="large" color="#3b82f6" />
+          <Text className="text-white mt-4 font-semibold text-lg">Uploading story...</Text>
+        </View>
+      )}
 
       {/* Top controls */}
       <SafeAreaView edges={['top']} className="absolute top-0 left-0 right-0 z-10">

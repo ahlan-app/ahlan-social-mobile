@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -64,6 +64,7 @@ export default function HomeFeedScreen() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [storyGroups, setStoryGroups] = useState<StoryGroup[]>([]);
   const [allStories, setAllStories] = useState<Story[]>([]);
+  const allStoriesRef = useRef<Story[]>([]);
   const [suggestedUsers, setSuggestedUsers] = useState<SimpleUser[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -111,12 +112,16 @@ export default function HomeFeedScreen() {
 
     setStoryGroups(Array.from(groups.values()));
     setAllStories(feedStories);
+    allStoriesRef.current = feedStories;
   }, [isUserBlocked, userProfile?.username]);
 
   const refreshStories = useCallback(async () => {
     try {
       const stories = await getStories();
-      applyStoriesState(stories);
+      // Only update if we got stories OR if we had stories before (don't clear transiently)
+      if (stories.length > 0 || allStoriesRef.current.length === 0) {
+        applyStoriesState(stories);
+      }
     } catch (error) {
       console.error('Story refresh error:', error);
     }

@@ -3,7 +3,7 @@ import type { Story } from '../../types';
 import { useApp } from '../../store/AppContext';
 import { HeartIcon, TrashIcon, ArrowLeftIcon, ShareIcon, EyeIcon } from '../Icons';
 import RenderUserContent from '../RenderUserContent';
-import { getStoryViewCount, recordStoryView, replyToStory } from '../../services/apiService';
+import { getStoryViewCount, getStoryViewers, recordStoryView, replyToStory } from '../../services/apiService';
 import UserAvatar from '../UserAvatar';
 
 interface StoryViewerProps {
@@ -18,6 +18,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({ stories: initialStories, clos
     const [replyText, setReplyText] = useState('');
     const { isStoryLiked, toggleStoryLike, userProfile, deleteStory, markStoryAsViewed, addToast } = useApp();
     const [viewCount, setViewCount] = useState<number | null>(null);
+    const [viewers, setViewers] = useState<any[]>([]);
 
     const [translateX, setTranslateX] = useState(0);
     const [translateY, setTranslateY] = useState(0);
@@ -77,11 +78,14 @@ const StoryViewer: React.FC<StoryViewerProps> = ({ stories: initialStories, clos
                 const fetchViews = async () => {
                     const count = await getStoryViewCount(currentStory.id);
                     setViewCount(count);
+                    const viewerList = await getStoryViewers(currentStory.id);
+                    setViewers(viewerList);
                 };
                 fetchViews();
             } else {
                 // Reset view count if it's not our story
                 setViewCount(null);
+                setViewers([]);
             }
         }
     }, [currentIndex, stories, markStoryAsViewed, userProfile.id, userProfile.username]);
@@ -312,21 +316,41 @@ const StoryViewer: React.FC<StoryViewerProps> = ({ stories: initialStories, clos
                     style={{ paddingBottom: `calc(1.5rem + env(safe-area-inset-bottom, 0rem))` }}
                 >
                     {isMyStory ? (
-                        <div className="flex items-center justify-between">
-                            {viewCount !== null && (
-                                <div className="flex items-center space-x-1 text-white font-semibold text-sm bg-black/40 py-2 px-3 rounded-full">
-                                    <EyeIcon className="w-5 h-5" />
-                                    <span>{viewCount}</span>
+                        <div className="flex flex-col space-y-3">
+                            <div className="flex items-center justify-between">
+                                {viewCount !== null && (
+                                    <div className="flex items-center space-x-1 text-white font-semibold text-sm bg-black/40 py-2 px-3 rounded-full">
+                                        <EyeIcon className="w-5 h-5" />
+                                        <span>{viewCount} {viewCount === 1 ? 'view' : 'views'}</span>
+                                    </div>
+                                )}
+                                <div className="flex items-center space-x-2">
+                                    <button 
+                                        onClick={handleDelete}
+                                        className="p-2 rounded-full bg-black/40 hover:bg-red-500/80 text-white transition-colors"
+                                    >
+                                        <TrashIcon className="w-5 h-5"/>
+                                    </button>
+                                </div>
+                            </div>
+                            {/* Viewer avatars row */}
+                            {viewers.length > 0 && (
+                                <div className="flex items-center space-x-1 overflow-x-auto py-1">
+                                    {viewers.slice(0, 25).map((viewer: any) => (
+                                        <UserAvatar
+                                            key={viewer.user_id}
+                                            username={viewer.username}
+                                            avatarUrl={viewer.avatar_url}
+                                            className="w-7 h-7 rounded-full flex-shrink-0"
+                                        />
+                                    ))}
+                                    {viewers.length > 25 && (
+                                        <span className="text-white/60 text-xs ml-2 flex-shrink-0">
+                                            +{viewers.length - 25}
+                                        </span>
+                                    )}
                                 </div>
                             )}
-                            <div className="flex items-center space-x-2">
-                                <button 
-                                    onClick={handleDelete}
-                                    className="p-2 rounded-full bg-black/40 hover:bg-red-500/80 text-white transition-colors"
-                                >
-                                    <TrashIcon className="w-5 h-5"/>
-                                </button>
-                            </div>
                         </div>
                     ) : (
                         <div className="flex items-center space-x-2">

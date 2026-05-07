@@ -4,6 +4,7 @@ import {
   Text,
   Pressable,
   TextInput,
+  ScrollView,
   Dimensions,
   Animated,
   PanResponder,
@@ -20,12 +21,14 @@ import {
   getStories,
   getMyStories,
   getStoryViewCount,
+  getStoryViewers,
   recordStoryView,
   replyToStory,
 } from '../services/apiService';
 import UserAvatar from '../components/native/UserAvatar';
 import { HeartIcon, XIcon, TrashIcon, EyeIcon, SendIcon } from '../components/native/Icons';
 import type { Story } from '../types';
+import type { StoryViewer } from '../services/apiService';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const STORY_DURATION = 15000;
@@ -59,6 +62,7 @@ export default function StoryViewerScreen() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [replyText, setReplyText] = useState('');
   const [viewCount, setViewCount] = useState<number | null>(null);
+  const [viewers, setViewers] = useState<StoryViewer[]>([]);
   const [isPaused, setIsPaused] = useState(false);
 
   const progressAnim = useRef(new Animated.Value(0)).current;
@@ -125,8 +129,12 @@ export default function StoryViewerScreen() {
 
     if (isOwnStory) {
       getStoryViewCount(currentStory.id).then(setViewCount).catch(() => setViewCount(null));
-    } else if (userProfile?.id) {
-      recordStoryView(currentStory.id, userProfile.id).catch(() => {});
+      getStoryViewers(currentStory.id).then(setViewers).catch(() => setViewers([]));
+    } else {
+      setViewers([]);
+      if (userProfile?.id) {
+        recordStoryView(currentStory.id, userProfile.id).catch(() => {});
+      }
     }
   }, [currentIndex, currentStory?.id]);
 
@@ -400,16 +408,55 @@ export default function StoryViewerScreen() {
         <SafeAreaView edges={['bottom']} className="absolute bottom-0 left-0 right-0 z-20">
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
             {isOwnStory ? (
-              <View className="flex-row items-center justify-between px-6 pb-4">
-                <View className="flex-row items-center" style={{ gap: 6 }}>
-                  <EyeIcon color="white" size={20} />
-                  <Text className="text-white font-semibold">
-                    {viewCount !== null ? viewCount : '...'}
-                  </Text>
+              <View className="px-6 pb-4">
+                <View className="flex-row items-center justify-between mb-3">
+                  <Pressable
+                    className="flex-row items-center"
+                    style={{ gap: 6 }}
+                    onPress={() => {
+                      if (viewers.length > 0) {
+                        router.push({
+                          pathname: '/user-list',
+                          params: { type: 'storyViews', storyId: currentStory.id, title: 'Story Views' },
+                        });
+                      }
+                    }}
+                  >
+                    <EyeIcon color="white" size={20} />
+                    <Text className="text-white font-semibold">
+                      {viewCount !== null ? `${viewCount} view${viewCount !== 1 ? 's' : ''}` : '...'}
+                    </Text>
+                  </Pressable>
+                  <Pressable onPress={handleDelete} className="p-2">
+                    <TrashIcon color="#ef4444" size={22} />
+                  </Pressable>
                 </View>
-                <Pressable onPress={handleDelete} className="p-2">
-                  <TrashIcon color="#ef4444" size={22} />
-                </Pressable>
+
+                {/* Viewer avatars row */}
+                {viewers.length > 0 && (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} className="pb-1">
+                    {viewers.slice(0, 20).map((viewer) => (
+                      <Pressable
+                        key={viewer.user_id}
+                        onPress={() => router.push(`/user/${viewer.username}`)}
+                        className="mr-2"
+                      >
+                        <UserAvatar
+                          username={viewer.username}
+                          avatarUrl={viewer.avatar_url || undefined}
+                          size={32}
+                        />
+                      </Pressable>
+                    ))}
+                    {viewers.length > 20 && (
+                      <View className="w-8 h-8 rounded-full bg-gray-700 items-center justify-center">
+                        <Text className="text-white text-xs">
+                          +{viewers.length - 20}
+                        </Text>
+                      </View>
+                    )}
+                  </ScrollView>
+                )}
               </View>
             ) : (
               <View className="flex-row items-center px-4 pb-4" style={{ gap: 12 }}>

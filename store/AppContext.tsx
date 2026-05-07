@@ -587,6 +587,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         } catch (error) {
             console.error("Failed to publish post.", error);
             addToast('Failed to create post.', 'error');
+            throw error;
         }
     }, [addToast]);
 

@@ -121,7 +121,8 @@ export default function StoryCreateScreen() {
         addToast('Failed to upload story.', 'error');
       } finally {
         setIsUploading(false);
-        router.back();
+        // Brief delay so success/error toast is visible before navigating away
+        setTimeout(() => router.back(), 1200);
       }
     },
     [userProfile, addUserStory, replaceStory, deleteStory, addToast, caption, router],

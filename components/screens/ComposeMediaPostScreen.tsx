@@ -15,7 +15,7 @@ interface ComposeMediaPostScreenProps {
 const ComposeMediaPostScreen: React.FC<ComposeMediaPostScreenProps> = ({ initialMediaSrc, close }) => {
     const [caption, setCaption] = useState('');
     const [isPosting, setPosting] = useState(false);
-    const { addProfilePost, userProfile } = useApp();
+    const { addProfilePost, userProfile, addToast } = useApp();
     const [isFlagPickerOpen, setFlagPickerOpen] = useState(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -36,10 +36,15 @@ const ComposeMediaPostScreen: React.FC<ComposeMediaPostScreenProps> = ({ initial
             timestamp: new Date().toISOString(),
         };
         
-        await new Promise(res => setTimeout(res, 800));
-        addProfilePost(newPost);
-        setPosting(false);
-        close();
+        try {
+            await addProfilePost(newPost);
+            close();
+        } catch (error) {
+            console.error('Post creation failed:', error);
+            addToast('Failed to create post. Please try again.', 'error');
+        } finally {
+            setPosting(false);
+        }
     };
 
     const handleFlagSelect = (flagTextCode: string) => {

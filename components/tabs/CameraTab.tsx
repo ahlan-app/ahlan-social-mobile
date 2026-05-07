@@ -23,7 +23,7 @@ const CameraTab: React.FC<CameraTabProps> = ({ onPostCreated, close }) => {
     const [cameraFacingMode, setCameraFacingMode] = useState<'environment' | 'user'>('environment');
     const [isFlagPickerOpen, setFlagPickerOpen] = useState(false);
 
-    const { addProfilePost, userProfile } = useApp();
+    const { addProfilePost, userProfile, addToast } = useApp();
 
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -182,9 +182,15 @@ const CameraTab: React.FC<CameraTabProps> = ({ onPostCreated, close }) => {
             timestamp: new Date().toISOString(),
         };
 
-        await new Promise(res => setTimeout(res, 800)); // Simulate network latency
-        addProfilePost(newPost);
-        onPostCreated();
+        try {
+            await addProfilePost(newPost);
+            onPostCreated();
+        } catch (error) {
+            console.error('Post creation failed:', error);
+            addToast('Failed to create post. Please try again.', 'error');
+        } finally {
+            setIsPosting(false);
+        }
     };
     
     const resetToCapture = () => {

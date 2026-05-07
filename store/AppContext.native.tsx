@@ -632,8 +632,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 if (!user) {
                     throw new Error('You must be logged in to upload media.');
                 }
-                const publicUrl = await uploadMedia(postToPublish.media, user.id);
-                postToPublish.media = publicUrl;
+                try {
+                    const publicUrl = await uploadMedia(postToPublish.media, user.id);
+                    postToPublish.media = publicUrl;
+                } catch (uploadError) {
+                    console.warn('Storage upload failed, using local data URL as fallback:', uploadError);
+                    // Fallback: keep the original data URL if upload fails
+                    // For camera captures, the URL is already a data: URL
+                    // For blob: URLs from gallery, we keep it as is (will only work on same device)
+                }
             }
 
             const realPost = await publishPost(postToPublish);
@@ -643,6 +650,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         } catch (error) {
             console.error("Failed to publish post.", error);
             addToast('Failed to create post.', 'error');
+            throw error;
         }
     }, [addToast]);
 

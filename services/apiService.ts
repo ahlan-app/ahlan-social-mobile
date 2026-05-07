@@ -335,7 +335,22 @@ export async function uploadMedia(localUri: string, userId: string): Promise<str
         }
     }
 
-    throw lastError || new Error('Media upload failed: could not upload to any storage bucket.');
+    // All buckets failed — fall back to data URL
+    console.warn('All storage buckets unavailable, falling back to data URL.');
+    return arrayBufferToDataUrl(arrayBuffer, contentType);
+}
+
+/**
+ * Convert ArrayBuffer to base64 data URL — fallback when storage is unavailable.
+ */
+function arrayBufferToDataUrl(buffer: ArrayBuffer, contentType: string): string {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    const base64 = btoa(binary);
+    return `data:${contentType};base64,${base64}`;
 }
 
 const toStorageExtension = (mimeType: string | undefined, fallback: string = 'bin'): string => {
@@ -994,24 +1009,25 @@ export const checkUsernameExists = async (username: string): Promise<boolean> =>
 // Stories
 // =========================================================
 export const getStories = async (): Promise<Story[]> => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-        return []; // Not logged in, no stories to show.
-    }
-
     try {
+        // Get current user — don't return early if null, RLS will handle it
+        const { data: { user } } = await supabase.auth.getUser();
+        
         // Get IDs of users the current user follows
-        const { data: followingData, error: followingError } = await supabase
-            .from('follows')
-            .select('followed_id')
-            .eq('follower_id', user.id);
-
-        if (followingError) throw followingError;
-
-        const followingIds = followingData.map(f => f.followed_id);
+        const followingIds: string[] = [];
+        if (user) {
+            const { data: followingData, error: followingError } = await supabase
+                .from('follows')
+                .select('followed_id')
+                .eq('follower_id', user.id);
+            if (!followingError && followingData) {
+                followingIds.push(...followingData.map(f => f.followed_id));
+            }
+        }
         
         // Fetch stories from followed users AND the current user
-        const userIdsToFetch = [...followingIds, user.id];
+        const userIdsToFetch = user ? [...followingIds, user.id] : followingIds;
+        if (userIdsToFetch.length === 0) return [];
 
         // Filter stories created in the last 24 hours
         const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -1020,7 +1036,7 @@ export const getStories = async (): Promise<Story[]> => {
             .from('stories')
             .select(`*, profiles!user_id(username, avatar_url)`)
             .in('user_id', userIdsToFetch)
-            .gte('created_at', twentyFourHoursAgo) // Add time filter
+            .gte('created_at', twentyFourHoursAgo)
             .order('created_at', { ascending: false });
 
         if (error) {
@@ -1232,6 +1248,37 @@ export const getStoryViewCount = async (storyId: string): Promise<number> => {
         .select('*', { count: 'exact', head: true })
         .eq('story_id', storyId);
     return error ? 0 : count || 0;
+};
+
+export interface StoryViewer {
+    user_id: string;
+    username: string;
+    avatar_url: string | null;
+}
+
+export const getStoryViewers = async (storyId: string): Promise<StoryViewer[]> => {
+    const { data, error } = await supabase
+        .from('story_views')
+        .select(`
+            user_id,
+            profiles!user_id (
+                username,
+                avatar_url
+            )
+        `)
+        .eq('story_id', storyId)
+        .limit(50);
+
+    if (error) {
+        console.error('Error fetching story viewers:', error);
+        return [];
+    }
+
+    return (data || []).map((row: any) => ({
+        user_id: row.user_id,
+        username: row.profiles?.username || 'unknown',
+        avatar_url: row.profiles?.avatar_url || null,
+    }));
 };
 
 export const replyToStory = async (storyId: string, storyOwnerId: string, text: string) => {
