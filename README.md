@@ -2,6 +2,7 @@
 
 A modern, open-source social media mobile application built with React Native and Expo.
 
+
 ## Features
 
 - **Authentication** — Sign up, login, forgot password (Supabase Auth)
@@ -22,7 +23,7 @@ A modern, open-source social media mobile application built with React Native an
 - **Expo Router** — File-based navigation
 - **NativeWind** — Tailwind CSS for React Native
 - **Supabase** — Auth, Database, Storage, Realtime
-- **TypeScript** — Type-safe codebase
+- **TypeScript** — Type-safe codebase.
 
 ## Architecture
 
