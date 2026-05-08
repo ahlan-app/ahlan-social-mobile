@@ -7,7 +7,6 @@ import * as Haptics from 'expo-haptics';
 import type { Comment, Post, Story, UserProfile, Toast, Notification, Message } from '../types';
 import { normalizeNotifications } from '../types';
 
-
 interface AppState {
     likedPosts: Set<string>;
     repostedPosts: Set<string>;
@@ -245,7 +244,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             if (messagesChannel) supabase.removeChannel(messagesChannel);
         };
     }, [state.userProfile.id]);
-
 
     const addToast = useCallback((message: string, type: Toast['type'] = 'info') => {
         const id = `toast-${Date.now()}`;
@@ -654,7 +652,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
     }, [addToast]);
 
-
     const deleteProfilePost = useCallback((postId: string) => {
         // Optimistic update
         // FIX: Explicitly type prevState as AppState.
@@ -1019,7 +1016,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (error) {
             console.error("Error marking all messages as read:", error.message || error);
         } else {
-            console.log("✅ All messages marked as read.");
         }
     }, [state.userProfile.id, state.unreadMessageCount]);
 
@@ -1061,7 +1057,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         // FIX: Explicitly type prevState as AppState.
         setState((prevState: AppState) => ({ ...prevState, tooltip }));
     }, []);
-
 
     const contextValue = useMemo(() => ({
         ...state,

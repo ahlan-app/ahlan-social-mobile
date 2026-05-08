@@ -9,7 +9,6 @@ import PostCard from '../PostCard';
 import PostGridSkeleton from '../PostGridSkeleton';
 import UserAvatar from '../UserAvatar';
 
-
 interface UserProfileScreenProps {
     user: { username: string; avatar: string };
     close: () => void;
@@ -52,7 +51,6 @@ const RefreshIndicator: React.FC<{ isRefreshing: boolean; pullPosition: number }
     );
 };
 
-
 const UserProfileScreen: React.FC<UserProfileScreenProps> = ({ user, close, onViewProfile, onViewComments, onViewPost, onStartChat, onShareProfile, onLogout, onViewLikers, onViewReposters, onSharePost, onViewStories }) => {
     const [profile, setProfile] = useState<UserProfileType | null>(null);
     const [posts, setPosts] = useState<Post[]>([]);
@@ -73,7 +71,6 @@ const UserProfileScreen: React.FC<UserProfileScreenProps> = ({ user, close, onVi
     const scrollContainerRef = useRef<HTMLDivElement>(null);
     const pullPositionRef = useRef(pullPosition);
     pullPositionRef.current = pullPosition;
-
 
     const fetchData = useCallback(async (isRefresh = false) => {
         if (!isRefresh && !profile) setLoading(true);
@@ -125,7 +122,6 @@ const UserProfileScreen: React.FC<UserProfileScreenProps> = ({ user, close, onVi
             // FIX: Corrected typo from `following_id` to `followed_id` to match the database schema.
             const changedFollowing = payload.new?.followed_id || payload.old?.followed_id;
             if (changedFollower === profile.id || changedFollowing === profile.id) {
-                console.log('Takip tablosu değişti (user profile screen):', payload);
                 refreshFollowerCounts();
             }
         };

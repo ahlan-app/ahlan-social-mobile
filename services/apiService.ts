@@ -166,7 +166,6 @@ export const ensureCurrentUserProfile = async (): Promise<boolean> => {
     return ensureProfileRowForUser(user);
 };
 
-
 export async function sendNotification({
   sender_id,
   receiver_id,
@@ -216,13 +215,11 @@ export async function sendNotification({
     if (error) {
       console.error("Notification error:", error.message || error);
     } else {
-      console.log(`✅ ${type} notification sent to ${receiver_id}`);
     }
   } catch (err: any) {
     console.error("Notification insert failed:", err.message);
   }
 }
-
 
 async function handleMentions(content: string, sender_id: string, post_id: string, comment_id: string | null = null) {
   // Find @username mentions
@@ -544,8 +541,6 @@ export const publishPost = async (post: Post): Promise<Post | null> => {
         if (fetchError) throw fetchError;
         if (!data) throw new Error("Could not retrieve post after creation.");
 
-        console.log('✅ Post başarıyla paylaşıldı:', data);
-
         // Handle mentions after post is successfully created
         if (content.trim().length > 0) {
             await handleMentions(content, user.id, data.id, null);
@@ -602,7 +597,6 @@ export const adminDeletePost = async (postId: string): Promise<void> => {
 };
 // -----------------------
 
-
 export const updatePost = async (post: Post): Promise<Post | null> => {
     const { id, content } = post;
     const { data, error } = await supabase
@@ -617,7 +611,6 @@ export const updatePost = async (post: Post): Promise<Post | null> => {
     }
     return { ...data, timestamp: data.created_at } as Post;
 };
-
 
 export const cleanHtml = (html: string): string => {
     if (!html) return "";
@@ -687,7 +680,6 @@ export const mapPostData = (p: any): Post => {
     };
 };
 
-
 export const getTimeline = async (): Promise<Post[]> => {
     try {
         const { data: { user } } = await supabase.auth.getUser();
@@ -719,7 +711,6 @@ export const getTimeline = async (): Promise<Post[]> => {
         return [];
     }
 };
-
 
 let currentFeedCursor: string | null = null;
 export const getMorePosts = async (): Promise<Post[]> => {
@@ -1141,7 +1132,6 @@ export const getStoryById = async (storyId: string): Promise<Story | null> => {
     }
 
     // Not a follower, deny access
-    console.log(`Access denied: User ${currentUser.id} is not following ${storyOwnerId}.`);
     return null;
 };
 
@@ -1402,7 +1392,6 @@ export const getSavedPosts = async (userId: string): Promise<Post[]> => {
             const timeB = savedOrderMap.get(b.id) ?? 0;
             return timeB - timeA;
         });
-
 
         return sortedPosts.map(mapPostData);
 

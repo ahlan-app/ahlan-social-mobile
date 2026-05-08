@@ -8,7 +8,6 @@ import UserSuggestions from '../UserSuggestions';
 import { VerifiedIcon } from '../Icons';
 import UserAvatar from '../UserAvatar';
 
-
 interface HomeTabProps {
     scrollContainerRef: React.RefObject<HTMLElement>;
     onViewProfile: (username: string, avatar?: string | null) => void;
@@ -76,7 +75,6 @@ const NewUserHomeSuggestions: React.FC<{ suggestions: Suggestion[], onViewProfil
         </div>
     );
 };
-
 
 const RefreshIndicator: React.FC<{ isRefreshing: boolean; pullPosition: number }> = ({ isRefreshing, pullPosition }) => {
     const PULL_THRESHOLD = 80;
@@ -174,7 +172,6 @@ const HomeTab: React.FC<HomeTabProps> = ({ scrollContainerRef, onRefreshStories,
     }, [isRefreshing, onRefreshStories, addToast]);
     
     const handlePostUpdates = useCallback(async (payload: any) => {
-        console.log('Real-time post update received', payload);
         const currentPosts = postsRef.current;
 
         if (payload.eventType === 'INSERT') {

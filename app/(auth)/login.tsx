@@ -35,12 +35,9 @@ export default function LoginScreen() {
 
       // If identifier is not an email, assume it's a username and look up email
       if (!identifier.includes('@')) {
-        console.log('[Login] Looking up username:', identifier.toLowerCase());
         const { data, error: rpcError } = await supabase.rpc('get_email_by_username', {
           p_username: identifier.toLowerCase()
         });
-
-        console.log('[Login] RPC result:', { data, rpcError });
 
         if (rpcError || !data) {
           throw new Error(rpcError?.message || 'Username not found');
@@ -48,15 +45,10 @@ export default function LoginScreen() {
         email = data;
       }
 
-      console.log('[Login] Attempting signIn with email:', JSON.stringify(email), 'password length:', password.length);
-      console.log('[Login] Supabase URL:', (supabase as any).supabaseUrl || (supabase as any).restUrl);
-
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password: password,
       });
-
-      console.log('[Login] signIn result:', { user: signInData?.user?.id, signInError });
 
       if (signInError) throw signInError;
 

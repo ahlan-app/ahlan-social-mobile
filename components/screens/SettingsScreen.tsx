@@ -18,7 +18,6 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ close, onLogout, onOpen
         );
 
         if (isConfirmed) {
-            console.log("User confirmed account deletion.");
             onLogout();
         }
     };

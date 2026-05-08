@@ -48,8 +48,6 @@ const RefreshIndicator: React.FC<{ isRefreshing: boolean; pullPosition: number }
     );
 };
 
-
-
 const ProfileTab: React.FC<ProfileTabProps> = ({ onViewProfile, onLogout, onViewStories, scrollContainerRef, onViewComments, onViewPost, onViewLikers, onViewReposters, onSharePost }) => {
     const [activeTab, setActiveTab] = useState<'posts' | 'reposts' | 'saved'>('posts');
     const { userProfile, addToast, refreshAllData } = useApp();
@@ -111,7 +109,6 @@ const ProfileTab: React.FC<ProfileTabProps> = ({ onViewProfile, onLogout, onView
     }, [fetchUserPosts, fetchUserReposts, fetchSavedPosts, refreshFollowerCounts, posts.length]);
 
     const handlePostChange = useCallback(async (payload: any) => {
-        console.log('Profile posts changed, performing granular update...', payload);
         const currentPosts = postsRef.current;
         
         if (payload.eventType === 'INSERT') {
@@ -164,7 +161,6 @@ const ProfileTab: React.FC<ProfileTabProps> = ({ onViewProfile, onLogout, onView
             const changedFollowing = payload.new?.followed_id || payload.old?.followed_id;
 
             if (changedFollower === userProfile.id || changedFollowing === userProfile.id) {
-                console.log('Takip tablosu değişti, sayılar yenileniyor:', payload);
                 refreshFollowerCounts();
             }
         };
@@ -182,7 +178,6 @@ const ProfileTab: React.FC<ProfileTabProps> = ({ onViewProfile, onLogout, onView
             supabase.removeChannel(followsSubscription);
         };
     }, [userProfile.id, refreshFollowerCounts]);
-
 
     const handleRefresh = useCallback(async () => {
         if (isRefreshing) return;

@@ -65,7 +65,6 @@ const PostHeader: React.FC<{
     };
     
     const handleSelectReportReason = (reason: string) => {
-        console.log(`User reported post ID: ${post.id} for reason: ${reason}`);
         setMenuState('closed');
         showTopNotification('Report Submitted', 'Thank you for your feedback. We will review the post.');
     };
@@ -231,7 +230,6 @@ const PostCard: React.FC<PostCardProps> = ({ post, isStoryVersion = false, onDel
         setRepostsCount(post.reposts);
     }, [post.reposts]);
 
-
     useEffect(() => {
         // Robust progressive image loading effect.
         const preview = post.media_preview_url;
@@ -265,7 +263,6 @@ const PostCard: React.FC<PostCardProps> = ({ post, isStoryVersion = false, onDel
     const totalVotes = post.poll ? post.poll.options.reduce((sum, opt) => sum + opt.votes, 0) + (userPollVote !== undefined ? 1 : 0) : 0;
     
     const needsTruncation = isTextOnly && post.content.length > MAX_CHARS;
-
 
     const handlePollVote = (optionIndex: number) => {
         if (userPollVote !== undefined) return;

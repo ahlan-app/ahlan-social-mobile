@@ -50,3 +50,6 @@ android/
 *.aab
 *.keystore
 local.properties
+
+# Supabase temp
+supabase/.temp/

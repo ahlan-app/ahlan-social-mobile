@@ -57,7 +57,6 @@ const StoryCreationScreen: React.FC<StoryCreationScreenProps> = ({ close, initia
             console.error(`Error accessing ${mode} camera:`, error);
             if (mode === 'environment') {
                 try {
-                    console.log('Environment camera failed, trying user camera...');
                     const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
                     setStream(fallbackStream);
                     setCameraMode('user');
@@ -146,7 +145,6 @@ const StoryCreationScreen: React.FC<StoryCreationScreenProps> = ({ close, initia
             const realStory = await uploadStory(file, null, userProfile.id);
             if (realStory) {
                 replaceStory(localId, realStory);
-                console.log("Story uploaded successfully and context updated.");
             } else {
                  throw new Error("Story upload failed on the server.");
             }
