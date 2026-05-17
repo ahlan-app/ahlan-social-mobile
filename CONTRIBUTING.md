@@ -88,3 +88,17 @@ Found a bug or have a feature request? Open an issue on [GitHub Issues](https://
 ## Security Vulnerabilities
 
 Please see [SECURITY.md](SECURITY.md) for our security policy and responsible disclosure process.
+
+## License
+
+By contributing to Ahlan Social, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE). All source files must include the standard copyright header:
+
+```
+// Copyright 2026 Samet Yilmaz Temel
+// SPDX-License-Identifier: Apache-2.0
+//
+// Ahlan Social — https://github.com/sametyilmaztemel/ahlan-social-mobile
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// ...
+```

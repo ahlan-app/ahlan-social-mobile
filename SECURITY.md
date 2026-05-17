@@ -42,3 +42,7 @@ We aim to acknowledge reports within 48 hours and provide a resolution timeline 
 ## Supabase RLS
 
 Ensure all database tables have appropriate Row Level Security policies. The anon key alone should never be sufficient to read or modify data that should be restricted.
+
+## License
+
+Ahlan Social is © 2026 Samet Yilmaz Temel, licensed under the [Apache License 2.0](LICENSE). Security research and responsible disclosure activities are authorized provided they comply with applicable law and the terms of the license.

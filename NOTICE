@@ -1,0 +1,29 @@
+Ahlan Social
+Copyright 2026 Samet Yilmaz Temel
+
+This product includes software developed at
+https://github.com/sametyilmaztemel/ahlan-social-mobile
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+---
+
+Third-Party Libraries
+
+This application uses the following open-source libraries:
+
+- React Native (MIT License) — https://reactnative.dev
+- Expo SDK (MIT License) — https://expo.dev
+- Supabase JavaScript Client (MIT License) — https://supabase.com
+- NativeWind (MIT License) — https://www.nativewind.dev
+- Expo Router (MIT License) — https://docs.expo.dev/router/introduction
