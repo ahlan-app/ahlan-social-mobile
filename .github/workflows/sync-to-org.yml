@@ -16,14 +16,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.ORG_SYNC_PAT }}
 
-      - name: Sync to ahlan-app/ahlan-social-mobile
+      - name: Push to ahlan-app org
         run: |
-          git remote add org https://x-access-token:${{ secrets.ORG_SYNC_PAT }}@github.com/ahlan-app/ahlan-social-mobile.git
-          git push org main --force
+          git remote set-url origin https://x-access-token:${{ secrets.ORG_SYNC_PAT }}@github.com/ahlan-app/ahlan-social-mobile.git
+          git push origin main --force
         env:
           GIT_TERMINAL_PROMPT: 0
-
-      - name: Cleanup
-        if: always()
-        run: git remote remove org
