@@ -1,7 +1,6 @@
-// Copyright 2026 Samet Yilmaz Temel
-// SPDX-License-Identifier: Apache-2.0
-//
 // Ahlan Social — https://github.com/sametyilmaztemel/ahlan-social-mobile
+// SPDX-License-Identifier: Apache-2.0
+// Coded by Samet Yilmaz Temel
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -46,10 +45,13 @@ export default function PrivacyPolicyScreen() {
         </Text>
         <Text className="text-white text-lg font-bold mb-3 mt-6">Copyright Notice</Text>
         <Text className="text-gray-400 text-base mb-3 leading-7">
-          © 2026 Samet Yilmaz Temel. All rights reserved.
+          © 2026 Ahlan Social. All rights reserved.
         </Text>
         <Text className="text-gray-400 text-base mb-3 leading-7">
-          Ahlan Social is licensed under the Apache License, Version 2.0. You may obtain a copy of the license at http://www.apache.org/licenses/LICENSE-2.0
+          Coded by Samet Yilmaz Temel.
+        </Text>
+        <Text className="text-gray-400 text-base mb-3 leading-7">
+          Licensed under the Apache License, Version 2.0. You may obtain a copy of the license at http://www.apache.org/licenses/LICENSE-2.0
         </Text>
         <Text className="text-gray-500 text-sm mb-6 leading-6">
           Source code available at: github.com/sametyilmaztemel/ahlan-social-mobile

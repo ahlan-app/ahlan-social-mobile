@@ -1,7 +1,6 @@
--- Copyright 2026 Samet Yilmaz Temel
--- SPDX-License-Identifier: Apache-2.0
---
 -- Ahlan Social — https://github.com/sametyilmaztemel/ahlan-social-mobile
+-- SPDX-License-Identifier: Apache-2.0
+-- Coded by Samet Yilmaz Temel
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.

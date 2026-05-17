@@ -121,7 +121,7 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for gu
 
 ## License
 
-Copyright © 2026 Samet Yilmaz Temel. All rights reserved.
+Copyright © 2026 Ahlan Social. All rights reserved. Coded by Samet Yilmaz Temel.
 
 Ahlan Social is licensed under the [Apache License 2.0](LICENSE).
 

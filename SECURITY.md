@@ -45,4 +45,4 @@ Ensure all database tables have appropriate Row Level Security policies. The ano
 
 ## License
 
-Ahlan Social is © 2026 Samet Yilmaz Temel, licensed under the [Apache License 2.0](LICENSE). Security research and responsible disclosure activities are authorized provided they comply with applicable law and the terms of the license.
+Ahlan Social is © 2026 Ahlan Social, licensed under the [Apache License 2.0](LICENSE). Coded by Samet Yilmaz Temel. Security research and responsible disclosure activities are authorized provided they comply with applicable law and the terms of the license.
