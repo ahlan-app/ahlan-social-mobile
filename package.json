@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "expo-router/entry",
   "description": "Ahlan Social — Open-source social media app built with React Native, Expo, and Supabase",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "author": "Samet Yilmaz Temel",
   "repository": {
     "type": "git",
