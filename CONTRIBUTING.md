@@ -80,7 +80,7 @@ Examples:
 
 ## Reporting Issues
 
-Found a bug or have a feature request? Open an issue on [GitHub Issues](https://github.com/sametyilmaztemel/ahlan-social-mobile/issues):
+Found a bug or have a feature request? Open an issue on [GitHub Issues](https://github.com/ahlan-app/ahlan-social-mobile/issues):
 
 - **Bug reports:** Include steps to reproduce, expected vs actual behavior, and your environment (OS, Expo SDK version, device/simulator).
 - **Feature requests:** Describe the use case and proposed solution.
@@ -94,7 +94,7 @@ Please see [SECURITY.md](SECURITY.md) for our security policy and responsible di
 By contributing to Ahlan Social, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE). All source files must include the standard copyright header:
 
 ```
-// Ahlan Social — https://github.com/sametyilmaztemel/ahlan-social-mobile
+// Ahlan Social — https://github.com/ahlan-app/ahlan-social-mobile
 // SPDX-License-Identifier: Apache-2.0
 // Coded by Samet Yilmaz Temel
 //

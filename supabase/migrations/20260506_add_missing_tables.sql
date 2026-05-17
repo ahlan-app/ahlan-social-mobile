@@ -1,4 +1,4 @@
--- Ahlan Social — https://github.com/sametyilmaztemel/ahlan-social-mobile
+-- Ahlan Social — https://github.com/ahlan-app/ahlan-social-mobile
 -- SPDX-License-Identifier: Apache-2.0
 -- Coded by Samet Yilmaz Temel
 --

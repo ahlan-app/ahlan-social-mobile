@@ -44,7 +44,7 @@ A modern, open-source social media mobile application built with React Native an
 
 ```bash
 # Clone the repository
-git clone https://github.com/sametyilmaztemel/ahlan-social-mobile.git
+git clone https://github.com/ahlan-app/ahlan-social-mobile.git
 cd ahlan-social-mobile
 
 # Install dependencies
@@ -113,7 +113,7 @@ ahlan-social-mobile/
 
 - **Supabase anon key** (`EXPO_PUBLIC_SUPABASE_ANON_KEY`) is a client-side key that is **designed to be public**. It is protected by Supabase Row Level Security (RLS) policies on the database side — it cannot bypass RLS or access admin operations.
 - **Never commit `.env.local`** or any file containing service role keys, secrets, or private credentials. `.env.local` is gitignored by default.
-- If you discover a security vulnerability, please report it via [GitHub Issues](https://github.com/sametyilmaztemel/ahlan-social-mobile/issues) or see [SECURITY.md](SECURITY.md) for responsible disclosure details.
+- If you discover a security vulnerability, please report it via [GitHub Issues](https://github.com/ahlan-app/ahlan-social-mobile/issues) or see [SECURITY.md](SECURITY.md) for responsible disclosure details.
 
 ## Contributing
 
@@ -121,7 +121,7 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for gu
 
 ## License
 
-Copyright © 2026 Ahlan Social. All rights reserved. Coded by Samet Yilmaz Temel.
+Copyright © 2026 Ahlan Social. All rights reserved.
 
 Ahlan Social is licensed under the [Apache License 2.0](LICENSE).
 
@@ -143,4 +143,4 @@ See [NOTICE](NOTICE) for third-party library attributions.
 
 ## Acknowledgments
 
-Built with ❤️ by [Samet Yilmaz Temel](https://github.com/sametyilmaztemel)
+Built with ❤️ by the [Ahlan Social](https://github.com/ahlan-app) team
