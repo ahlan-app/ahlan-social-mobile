@@ -18,7 +18,7 @@ import React from 'react';
 // --- Helper Functions and Components ---
 
 // Creates the wavy path for a horizontal stripe
-const createWavyPath = (yOffset: number, h: number, width: number, height: number): string => {
+export const createWavyPath = (yOffset: number, h: number, width: number, height: number): string => {
     const waveAmplitude = height * 0.05;
     const waveFrequency = (2 * Math.PI) / width;
     const wavePhase = Math.PI / 8;
@@ -37,7 +37,7 @@ const createWavyPath = (yOffset: number, h: number, width: number, height: numbe
 };
 
 // Creates a 5-pointed star path
-const createStarPath = (cx: number, cy: number, radius: number): string => {
+export const createStarPath = (cx: number, cy: number, radius: number): string => {
     let path = '';
     for (let i = 0; i < 10; i++) {
         const angle = (Math.PI / 5) * i - (Math.PI / 2);
@@ -50,7 +50,7 @@ const createStarPath = (cx: number, cy: number, radius: number): string => {
 };
 
 // Gets the vertical offset for an element at a specific x-coordinate due to the wave
-const getWavedY = (x: number, y: number, width: number, height: number): number => {
+export const getWavedY = (x: number, y: number, width: number, height: number): number => {
     const waveAmplitude = height * 0.05;
     const waveFrequency = (2 * Math.PI) / width;
     const wavePhase = Math.PI / 8;
@@ -58,7 +58,7 @@ const getWavedY = (x: number, y: number, width: number, height: number): number 
 };
 
 // Creates a wavy path for a vertical stripe
-const createWavyVerticalPath = (xOffset: number, w: number, width: number, height: number): string => {
+export const createWavyVerticalPath = (xOffset: number, w: number, width: number, height: number): string => {
     const waveAmplitude = width * 0.04;
     const waveFrequency = (2 * Math.PI) / height;
     const wavePhase = Math.PI / 4;
@@ -77,7 +77,7 @@ const createWavyVerticalPath = (xOffset: number, w: number, width: number, heigh
 };
 
 // Gets the horizontal offset for an element at a specific y-coordinate due to the vertical wave
-const getWavedX = (x: number, y: number, width: number, height: number): number => {
+export const getWavedX = (x: number, y: number, width: number, height: number): number => {
     const waveAmplitude = width * 0.04;
     const waveFrequency = (2 * Math.PI) / height;
     const wavePhase = Math.PI / 4;
@@ -85,7 +85,7 @@ const getWavedX = (x: number, y: number, width: number, height: number): number 
 };
 
 // Creates a wavy path for a horizontal stripe with the wave effect concentrated at the end.
-const createSlightWavyPath = (yOffset: number, h: number, width: number, height: number): string => {
+export const createSlightWavyPath = (yOffset: number, h: number, width: number, height: number): string => {
     const waveAmplitude = height * 0.03; // Reduced amplitude
     const waveFrequency = (2 * Math.PI) / width;
     const wavePhase = Math.PI / 8;
@@ -105,7 +105,7 @@ const createSlightWavyPath = (yOffset: number, h: number, width: number, height:
 };
 
 // Gets the vertical offset for an element at a specific x-coordinate due to the slight wave.
-const getSlightWavedY = (x: number, y: number, width: number, height: number): number => {
+export const getSlightWavedY = (x: number, y: number, width: number, height: number): number => {
     const waveAmplitude = height * 0.03; // Reduced amplitude
     const waveFrequency = (2 * Math.PI) / width;
     const wavePhase = Math.PI / 8;
@@ -113,7 +113,7 @@ const getSlightWavedY = (x: number, y: number, width: number, height: number): n
 };
 
 // Creates a wavy path for a vertical stripe with the wave effect concentrated at the end (right side).
-const createSlightWavyVerticalPath = (xOffset: number, w: number, width: number, height: number): string => {
+export const createSlightWavyVerticalPath = (xOffset: number, w: number, width: number, height: number): string => {
     const baseWaveAmplitude = width * 0.025; // Reduced amplitude
     // Modulate amplitude based on the stripe's horizontal position.
     // The further to the right, the wavier it gets.
@@ -137,7 +137,7 @@ const createSlightWavyVerticalPath = (xOffset: number, w: number, width: number,
 };
 
 // Gets the horizontal offset for an element at a specific y-coordinate due to the slight vertical wave
-const getSlightWavedX = (x: number, y: number, width: number, height: number): number => {
+export const getSlightWavedX = (x: number, y: number, width: number, height: number): number => {
     const baseWaveAmplitude = width * 0.025; // Reduced amplitude
     const modulationFactor = Math.pow(x / width, 2);
     const waveAmplitude = baseWaveAmplitude * modulationFactor;
