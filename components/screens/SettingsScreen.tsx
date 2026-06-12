@@ -13,9 +13,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import React, { useState } from 'react';
+import React from 'react';
 import { useApp } from '../../store/AppContext';
 import { ArrowRightIcon, TrashIcon, LogoutIcon } from '../Icons';
+import {
+    DELETE_LABEL,
+    LOGOUT_LABEL,
+    shouldProceedWithDeletion,
+} from './SettingsScreen.utils';
 
 interface SettingsScreenProps {
     close: () => void;
@@ -32,11 +37,11 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ close, onLogout, onOpen
             "Are you sure you want to delete your account?\n\nThis action is permanent and cannot be undone. All your posts, stories, and data will be erased forever."
         );
 
-        if (isConfirmed) {
+        if (shouldProceedWithDeletion(isConfirmed)) {
             onLogout();
         }
     };
-    
+
     return (
         <div className="fixed inset-0 bg-black z-50 flex flex-col h-screen animate-fade-in">
             <style>{`
@@ -77,7 +82,7 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ close, onLogout, onOpen
                                 className="bg-red-600/20 hover:bg-red-600/40 text-red-400 font-bold py-2 px-4 rounded-lg transition-colors flex items-center space-x-2"
                             >
                                 <LogoutIcon className="w-5 h-5" />
-                                <span>Log Out</span>
+                                <span>{LOGOUT_LABEL}</span>
                             </button>
                         </div>
                     </div>
@@ -112,7 +117,7 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ close, onLogout, onOpen
                                 className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition-colors flex items-center space-x-2"
                             >
                                 <TrashIcon className="w-5 h-5" />
-                                <span>Delete</span>
+                                <span>{DELETE_LABEL}</span>
                             </button>
                         </div>
                     </div>
