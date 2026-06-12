@@ -16,6 +16,14 @@
 import React, { useState } from 'react';
 import { AhlanIcon } from '../Icons';
 import { supabase } from '../../services/apiService';
+import {
+    areLoginFieldsFilled,
+    EMPTY_FORM_ERROR,
+    INVALID_USERNAME_ERROR,
+    looksLikeEmail,
+    normalizeIdentifier,
+    shouldDisableSubmit,
+} from './LoginScreen.utils';
 
 interface LoginScreenProps {
     onLogin: () => void;
@@ -29,14 +37,14 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, onNavigateToSignUp }
     const [error, setError] = useState('');
     const [shake, setShake] = useState(false);
 
-    const isFormValid = loginIdentifier.trim() !== '' && password.trim() !== '';
+    const isFormValid = areLoginFieldsFilled(loginIdentifier, password);
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
         if (isLoading) return;
 
         if (!isFormValid) {
-            setError('Please enter your username/email and password.');
+            setError(EMPTY_FORM_ERROR);
             setShake(true);
             return;
         }
@@ -46,7 +54,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, onNavigateToSignUp }
 
         try {
             let emailToLogin = '';
-            if (loginIdentifier.includes('@')) {
+            if (looksLikeEmail(loginIdentifier)) {
                 emailToLogin = loginIdentifier;
             } else {
                 // This assumes you have an RPC function in Supabase named `get_email_by_username`
@@ -63,7 +71,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, onNavigateToSignUp }
 
                 if (rpcError || !data) {
                     console.error('RPC Error:', rpcError);
-                    throw new Error('Invalid username or email.');
+                    throw new Error(INVALID_USERNAME_ERROR);
                 }
                 emailToLogin = data;
             }
@@ -166,7 +174,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, onNavigateToSignUp }
                         <input
                             type="text"
                             value={loginIdentifier}
-                            onChange={(e) => setLoginIdentifier(e.target.value.toLowerCase())}
+                            onChange={(e) => setLoginIdentifier(normalizeIdentifier(e.target.value))}
                             placeholder="Username or Email"
                             className="w-full bg-gray-800 border border-gray-700 rounded-lg py-3 px-4 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-shadow"
                             aria-label="Username or Email"
@@ -188,7 +196,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, onNavigateToSignUp }
                     
                     <button
                         type="submit"
-                        className="w-full bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-200 flex justify-center items-center"
+                        disabled={shouldDisableSubmit(isLoading)}
+                        className="w-full bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-200 flex justify-center items-center disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                         {isLoading ? (
                             <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-white"></div>
