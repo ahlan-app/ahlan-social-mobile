@@ -29,6 +29,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Swipeable } from 'react-native-gesture-handler';
 import { formatDistanceToNow } from 'date-fns';
 import { useApp } from '../../store/AppContext.native';
+import { createLikeGuard } from '../../services/likeGuard';
 import {
   getCommentsForPost,
   toggleCommentLike,
@@ -100,8 +101,11 @@ const CommentItem: React.FC<{
     fetchLikes();
   }, [comment.id]);
 
+  const likeGuardRef = useRef(createLikeGuard());
+
   const handleLike = async () => {
     if (!comment.id || comment.id.startsWith('temp-')) return;
+    if (!likeGuardRef.current.tryAcquire()) return;
     triggerHapticFeedback();
     try {
       const newLiked = await toggleCommentLike(comment.id);
@@ -109,6 +113,8 @@ const CommentItem: React.FC<{
       setLikesCount(prev => (newLiked ? prev + 1 : Math.max(0, prev - 1)));
     } catch (error) {
       console.error('Failed to toggle like', error);
+    } finally {
+      likeGuardRef.current.release();
     }
   };
 

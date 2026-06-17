@@ -17,6 +17,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { Comment, UserProfile } from '../../types';
 // FIX: Import missing functions to fetch comment like status and count.
 import { cleanHtml, getCommentsForPost, toggleCommentLike, getCommentLikesCount, isCommentLikedByUser, deleteComment as apiDeleteComment } from '../../services/apiService';
+import { createLikeGuard } from '../../services/likeGuard';
 import { useApp } from '../../store/AppContext';
 import { formatDistanceToNow } from 'date-fns';
 import { HeartIcon, ArrowRightIcon, FlagIcon } from '../Icons';
@@ -214,8 +215,11 @@ const CommentItem: React.FC<CommentItemProps> = ({ comment, onDelete, currentUse
         fetchLikes();
     }, [comment.id]);
 
+    const likeGuardRef = useRef(createLikeGuard());
+
     const handleLike = async () => {
         if (!comment.id || comment.id.startsWith('temp-')) return;
+        if (!likeGuardRef.current.tryAcquire()) return;
         triggerHapticFeedback();
         try {
             const newLiked = await toggleCommentLike(comment.id);
@@ -223,6 +227,8 @@ const CommentItem: React.FC<CommentItemProps> = ({ comment, onDelete, currentUse
             setLikesCount(prev => newLiked ? prev + 1 : (prev > 0 ? prev - 1 : 0));
         } catch (error) {
             console.error('Failed to toggle like', error);
+        } finally {
+            likeGuardRef.current.release();
         }
     };
     
