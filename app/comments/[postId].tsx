@@ -30,6 +30,7 @@ import { Swipeable } from 'react-native-gesture-handler';
 import { formatDistanceToNow } from 'date-fns';
 import { useApp } from '../../store/AppContext.native';
 import { createLikeGuard } from '../../services/likeGuard';
+import { createFetchGuard, runFetchGuarded } from '../../services/fetchGuard';
 import {
   getCommentsForPost,
   toggleCommentLike,
@@ -191,24 +192,55 @@ export default function CommentsScreen() {
     [getComments, postId],
   );
 
+  // Per-postId in-flight guard. Recreated when postId changes so a
+  // previous post's request can never race with a new one.
+  const fetchGuardRef = useRef(createFetchGuard());
+
+  useEffect(() => {
+    // When the route param changes, drop any in-flight request for
+    // the previous postId and start fresh.
+    fetchGuardRef.current.abort();
+    fetchGuardRef.current = createFetchGuard();
+  }, [postId]);
+
   const loadAndSetComments = useCallback(async () => {
     if (!postId) {
       setLoading(false);
       return;
     }
     setLoading(true);
-    try {
-      const fetched = await getCommentsForPost(postId);
-      setComments(postId, fetched);
-    } catch (error) {
-      console.error('Failed to load comments', error);
-    } finally {
+    const result = await runFetchGuarded(fetchGuardRef.current, async (signal) => {
+      try {
+        const fetched = await getCommentsForPost(postId);
+        if (signal?.aborted) {
+          // The fetch was cancelled while in flight; do not apply
+          // the stale result.
+          return [];
+        }
+        setComments(postId, fetched);
+        return fetched;
+      } catch (error) {
+        if ((error as { name?: string } | undefined)?.name === 'AbortError') {
+          return [];
+        }
+        console.error('Failed to load comments', error);
+        throw error;
+      }
+    });
+    if (result.ran) {
       setLoading(false);
     }
+    // When result.ran === false, a newer fetch is taking over; it
+    // owns the loading state from here on, so we leave it alone.
   }, [postId, setComments]);
 
   useEffect(() => {
     loadAndSetComments();
+    return () => {
+      // On unmount, cancel any in-flight request so it can't call
+      // setComments / setLoading on an unmounted component.
+      fetchGuardRef.current.abort();
+    };
   }, [loadAndSetComments]);
 
   useEffect(() => {
