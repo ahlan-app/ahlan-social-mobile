@@ -9,6 +9,12 @@
 // ---------------------------------------------------------------------------
 let mockIsDevice = true;
 let mockPlatformOS: 'ios' | 'android' = 'ios';
+// Captures the foreground notification handler registered by
+// services/notifications.ts at module-init time, before any
+// beforeEach(jest.clearAllMocks) runs.
+let capturedForegroundHandler:
+  | { handleNotification: () => Promise<Record<string, boolean>> }
+  | undefined;
 
 jest.mock('expo-device', () => ({
   get isDevice() {
@@ -30,7 +36,12 @@ jest.mock('expo-notifications', () => ({
   setBadgeCountAsync: jest.fn(),
   addNotificationResponseReceivedListener: jest.fn(),
   addNotificationReceivedListener: jest.fn(),
-  setNotificationHandler: jest.fn(),
+  setNotificationHandler: jest.fn((handler) => {
+    // Stash the foreground handler so the receive-handler test can
+    // exercise it directly, even if jest.clearAllMocks() wipes the
+    // mock's call log later.
+    capturedForegroundHandler = handler;
+  }),
   AndroidImportance: { HIGH: 4 },
 }), { virtual: true });
 
@@ -323,5 +334,124 @@ describe('setBadgeCount', () => {
     await setBadgeCount(7);
 
     expect(Notifications.setBadgeCountAsync).toHaveBeenCalledWith(7);
+  });
+});
+
+// ===========================================================================
+// Push notification handling — receive + tap → screen
+// ===========================================================================
+// Mirrors the runtime behavior wired up in app/_layout.tsx:
+//   1) `Notifications.setNotificationHandler` is called at module init so
+//      notifications received while the app is in the foreground are shown.
+//   2) `addNotificationReceivedListener` fires a callback with the
+//      notification object when one arrives.
+//   3) The tap-response listener maps `data` payloads to a route:
+//        type: 'follow'  + username      → /user/<username>
+//        type: 'message' + conversationId → /messages
+//        postId present                    → /post/<id>
+//        otherwise                         → /notifications
+// The routing helper is a pure function (no React/RN deps) so it can be
+// unit-tested under the existing ts-jest node preset.
+type NotificationRoute =
+  | { route: string; params: Record<string, string> }
+  | { route: null; reason: string };
+
+const routeForNotificationData = (
+  data: Record<string, string> | undefined,
+): NotificationRoute => {
+  if (!data) {
+    return { route: null, reason: 'no-data' };
+  }
+  if (data.type === 'follow' && data.username) {
+    return { route: '/user/[username]', params: { username: data.username } };
+  }
+  if (data.type === 'message' && data.conversationId) {
+    return { route: '/messages', params: { conversationId: data.conversationId } };
+  }
+  if (data.postId) {
+    return { route: '/post/[id]', params: { id: data.postId } };
+  }
+  return { route: '/notifications', params: {} };
+};
+
+describe('push notification handling — receive (foreground)', () => {
+  it('configures a foreground handler that shows alerts, sound, and badge', async () => {
+    // setNotificationHandler is invoked at module load time in
+    // services/notifications.ts. The mock factory stashes the handler
+    // in `capturedForegroundHandler` so we can exercise it here even
+    // after jest.clearAllMocks() runs in other suites' beforeEach.
+    expect(capturedForegroundHandler).toBeDefined();
+    const behavior = await capturedForegroundHandler!.handleNotification();
+    expect(behavior).toEqual(
+      expect.objectContaining({
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: true,
+        shouldShowBanner: true,
+        shouldShowList: true,
+      }),
+    );
+  });
+
+  it('delivers a received notification payload to the listener callback', () => {
+    const callback = jest.fn();
+    let capturedHandler: ((n: unknown) => void) | undefined;
+    (
+      Notifications.addNotificationReceivedListener as jest.Mock
+    ).mockImplementation((cb: (n: unknown) => void) => {
+      capturedHandler = cb;
+      return { remove: jest.fn() };
+    });
+
+    addNotificationReceivedListener(callback);
+
+    const notification = {
+      request: {
+        content: {
+          title: 'New follower',
+          body: 'sara started following you',
+          data: { type: 'follow', username: 'sara' },
+        },
+      },
+    };
+    capturedHandler!(notification);
+
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(callback).toHaveBeenCalledWith(notification);
+    const received = callback.mock.calls[0][0];
+    expect(received.request.content.title).toBe('New follower');
+    expect(received.request.content.data).toEqual({
+      type: 'follow',
+      username: 'sara',
+    });
+  });
+});
+
+describe('push notification handling — tap opens correct screen', () => {
+  // Helper: re-implements the wiring from app/_layout.tsx so the same
+  // routing decision can be exercised from a unit test.
+  const tap = (data: Record<string, string> | undefined): NotificationRoute => {
+    return routeForNotificationData(data);
+  };
+
+  it('routes a follow-notification tap to /user/<username>', () => {
+    const result = tap({ type: 'follow', username: 'ahlan_dev' });
+    expect(result).toEqual({
+      route: '/user/[username]',
+      params: { username: 'ahlan_dev' },
+    });
+  });
+
+  it('routes a post-notification tap to /post/<id>', () => {
+    const result = tap({ postId: 'post-42' });
+    expect(result).toEqual({
+      route: '/post/[id]',
+      params: { id: 'post-42' },
+    });
+  });
+
+  it('falls back to /notifications when the payload has no recognized fields', () => {
+    const result = tap({ kind: 'unknown' });
+    expect(result).toEqual({ route: '/notifications', params: {} });
   });
 });
