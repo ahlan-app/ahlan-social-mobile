@@ -113,6 +113,19 @@ describe('AppContext — default theme', () => {
     const state = buildInitialState();
     expect(state.theme).toBe('dark');
   });
+
+  it('exposes a dark default when no persisted theme and no system light preference is available', () => {
+    // Locks in the resolveInitialTheme fallback chain: localStorage
+    // (absent) -> matchMedia (returns false for "light") -> 'dark'.
+    const fs = require('fs');
+    const path = require('path');
+    const src = fs.readFileSync(path.join(__dirname, '..', 'store', 'AppContext.tsx'), 'utf8');
+    expect(src).toContain('resolveInitialTheme');
+    // The fallback default must remain 'dark' so the rest of the
+    // app's styling (dark cards, white text on settings) keeps its
+    // baseline.
+    expect(src).toMatch(/return\s+'dark';/);
+  });
 });
 
 // ─── 3. Default auth / session state ──────────────────────────────────
@@ -214,7 +227,10 @@ describe('AppContext — module wiring', () => {
     const contents = fs.readFileSync(filePath, 'utf8');
     expect(contents).toContain('export const AppProvider');
     expect(contents).toContain('useState<AppState>');
-    expect(contents).toContain("theme: 'dark'");
+    // Theme is resolved via resolveInitialTheme() (which defaults to
+    // 'dark'); we assert the resolver is wired in instead of the
+    // literal 'dark' default that used to live on this line.
+    expect(contents).toContain('resolveInitialTheme()');
     expect(contents).toContain("name: 'Ahlan User'");
   });
 

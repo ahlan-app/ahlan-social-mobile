@@ -105,11 +105,47 @@ interface AppContextType extends AppState {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 const BLOCKED_USERS_KEY = 'ahlan-blocked-users';
+const THEME_STORAGE_KEY = 'ahlan-theme';
+
+// Resolve the initial theme: prefer a persisted explicit choice, fall
+// back to the OS / browser preference via prefers-color-scheme, and
+// finally default to 'dark'. This mirrors the behavior of the rest of
+// the app (which defaults to dark) and is the single source of truth
+// for both the provider's useState initializer and the persistence
+// effect below.
+function resolveInitialTheme(): 'light' | 'dark' {
+    try {
+        const persisted = typeof localStorage !== 'undefined'
+            ? localStorage.getItem(THEME_STORAGE_KEY)
+            : null;
+        if (persisted === 'light' || persisted === 'dark') {
+            return persisted;
+        }
+    } catch (e) {
+        // localStorage may throw in some environments (private mode,
+        // SSR, etc.) — fall through to system preference.
+    }
+
+    try {
+        if (
+            typeof window !== 'undefined' &&
+            typeof window.matchMedia === 'function' &&
+            window.matchMedia('(prefers-color-scheme: light)').matches
+        ) {
+            return 'light';
+        }
+    } catch (e) {
+        // matchMedia may not exist (React Native, SSR, jsdom without
+        // it mocked). Default to 'dark' to match the rest of the app.
+    }
+
+    return 'dark';
+}
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [state, setState] = useState<AppState>(() => {
         const savedBlockedUsers = localStorage.getItem(BLOCKED_USERS_KEY);
-        
+
         let initialBlockedUsers: string[] = [];
         if (savedBlockedUsers) {
             try {
@@ -121,7 +157,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 console.error("Could not parse blocked users from local storage", e);
             }
         }
-        
+
         return {
             likedPosts: new Set(),
             repostedPosts: new Set(),
@@ -135,7 +171,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 bio: 'Hello, I am using Ahlan',
                 profilePicture: null,
             },
-            theme: 'dark',
+            theme: resolveInitialTheme(),
             userStories: [],
             storyComments: new Map(),
             likedStoryIds: new Set(),
@@ -650,6 +686,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }, []);
 
     const setTheme = useCallback((theme: 'light' | 'dark') => {
+        // Persist the user's explicit theme choice so subsequent app
+        // starts can honor it instead of falling back to the system
+        // preference. We swallow storage errors (private browsing,
+        // quota, disabled storage) — the in-memory state still updates,
+        // so the user gets feedback for the current session.
+        try {
+            if (typeof localStorage !== 'undefined') {
+                localStorage.setItem(THEME_STORAGE_KEY, theme);
+            }
+        } catch (e) {
+            console.error("Could not persist theme to local storage", e);
+        }
         // FIX: Explicitly typed `prevState` as AppState.
         setState((prevState: AppState) => ({ ...prevState, theme }));
     }, []);
