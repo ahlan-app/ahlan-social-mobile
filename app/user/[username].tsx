@@ -78,6 +78,8 @@ const GridTile: React.FC<{ post: Post; onPress: () => void }> = React.memo(({ po
   );
 });
 
+// Report-reason list is shared with the report-flow test suite.
+// See `services/reportReasons.ts` for the full contract.
 const REPORT_REASONS = [
   "It's spam",
   'Hate speech or symbols',

@@ -205,7 +205,96 @@ export const mapSuggestionRow = (
 };
 
 // ---------------------------------------------------------------------------
-// 4. Feed-page-size / pagination helpers
+// 4. Realtime-feed reducer helpers
+//
+// The HomeFeedScreen subscribes to Postgres Changes on the `posts` table
+// and pipes every event through `handlePostUpdates`. That reducer has
+// three branches, each of which mutates the local `posts` state:
+//
+//   - INSERT  → prepend the new post (skipping duplicates / blocked authors)
+//   - UPDATE  → replace the matching post by id (e.g. reaction count change)
+//   - DELETE  → drop the matching post by id
+//
+// We extract the pure state-transition bits here so the behaviour the
+// user actually sees — "a new post shows up at the top of my feed",
+// "a post disappears when its author deletes it", "the heart count
+// ticks up the moment someone likes the post" — can be locked down
+// with deterministic tests that do not need React, expo-router, or a
+// mock Supabase channel.
+//
+// The helpers are intentionally framework-agnostic. They take the
+// current post list and an incoming Post (or just an id) and return a
+// new list, never mutating the input.
+// ---------------------------------------------------------------------------
+
+/**
+ * Apply a Postgres Changes INSERT payload to the timeline.
+ *
+ * - Returns the original `current` reference (no re-render needed) when
+ *   the post is already present.
+ * - Returns the original `current` reference when the post comes from
+ *   a blocked author (the screen filters these out before rendering).
+ * - Otherwise returns a new array with the post prepended so it shows
+ *   up at the top of the feed.
+ */
+export const applyRealtimeInsert = <T extends FeedPost>(
+  current: readonly T[],
+  incoming: T,
+  isBlocked?: (username: string | undefined) => boolean,
+): T[] => {
+  if (!incoming?.id) return current.slice();
+  if (current.some(post => post.id === incoming.id)) return current.slice();
+  if (isBlocked && isBlocked(incoming.username)) return current.slice();
+  return [incoming, ...current];
+};
+
+/**
+ * Apply a Postgres Changes UPDATE payload to the timeline.
+ *
+ * When a user likes / unlikes a post Supabase emits an UPDATE on the
+ * `posts` row carrying the refreshed `likes` (reaction) count. We
+ * replace the matching post in-place by id and leave every other post
+ * untouched, so the rest of the timeline does not flicker.
+ *
+ * Returns the original `current` reference when no post matches the
+ * incoming id (the post may have been deleted out from under us, or
+ * the UPDATE may not yet be relevant to this screen).
+ */
+export const applyRealtimeUpdate = <T extends FeedPost>(
+  current: readonly T[],
+  incoming: T,
+): T[] => {
+  if (!incoming?.id) return current.slice();
+  let changed = false;
+  const next = current.map(post => {
+    if (post.id !== incoming.id) return post;
+    changed = true;
+    return incoming;
+  });
+  if (!changed) return current.slice();
+  return next;
+};
+
+/**
+ * Apply a Postgres Changes DELETE payload to the timeline.
+ *
+ * Supabase sends the deleted row in `payload.old`. We drop the
+ * matching post by id; if no post matches (it was never on this
+ * user's timeline, or was already removed) we return the original
+ * reference so React can bail out of the re-render.
+ */
+export const applyRealtimeDelete = <T extends FeedPost>(
+  current: readonly T[],
+  deletedId: string | undefined,
+): T[] => {
+  if (!deletedId) return current.slice();
+  const next = current.filter(post => post.id !== deletedId);
+  if (next.length === current.length) return current.slice();
+  return next;
+};
+
+// ---------------------------------------------------------------------------
+// 5. Feed-page-size / pagination helpers
 // ---------------------------------------------------------------------------
 
 /**
