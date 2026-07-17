@@ -1,3 +1,5 @@
+<a href='https://www.saashub.com/ahlan-social?utm_source=badge&utm_campaign=badge&utm_content=ahlan-social&badge_variant=color&badge_kind=approved' target='_blank'><img src="https://cdn-b.saashub.com/img/badges/approved-color.png?v=1" alt="Ahlan social badge" style="max-width: 150px;"/></a>
+
 # Ahlan Social 🔵 
 
 A modern, open-source social media mobile application built with React Native and Expo.
