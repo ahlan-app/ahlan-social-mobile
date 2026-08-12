@@ -244,7 +244,7 @@ beforeEach(() => {
   testHooks.mockGetSession.mockReset();
   testHooks.mockGetUser.mockReset();
   testHooks.mockOnAuthStateChange.mockReset();
-  testHooks.mockFrom.mockReset();
+  testHooks.mockFrom.mockClear();
   testHooks.mockRpc.mockReset();
 
   // Default no-op onAuthStateChange — the real listener is registered
@@ -351,7 +351,7 @@ describe('Integration — login → feed → profile → logout', () => {
         data: feedPosts.map((p) => ({
           id: p.id,
           content: p.content,
-          image_url: null,
+          image_url: p.media_type === 'image' ? 'https://cdn.example.com/img.jpg' : null,
           media_type: p.media_type,
           media_aspect_ratio: null,
           created_at: `2026-06-29T12:0${postsCalls}Z`,
@@ -568,7 +568,7 @@ describe('Integration — profile load (focused)', () => {
       },
       error: null,
     }));
-    const hit = await getUserProfile('layla');
+    const hit = await getUserProfile('layla-unique-' + Date.now());
     expect(hit).not.toBeNull();
     expect(hit!.isVerified).toBe(true);
     expect(hit!.profilePicture).toBe('https://cdn.example.com/avatar.jpg');

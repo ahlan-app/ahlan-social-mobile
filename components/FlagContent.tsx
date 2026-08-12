@@ -970,17 +970,6 @@ const AustralianWattleFlag: React.FC = () => {
     );
 };
 
-const NewFlag: React.FC = () => {
-    const w = 35, h = 20;
-    const emojiY = getWavedY(w/2, h * 0.55, w, h);
-    return (
-        <FlagWrapper>
-            <path d={createWavyPath(0, h, w, h)} fill="gray" />
-            <text x="50%" y={emojiY} dominantBaseline="middle" textAnchor="middle" fontSize="16">🚩</text>
-        </FlagWrapper>
-    );
-};
-
 // --- New Flag Components ---
 
 const AboriginalFlag: React.FC = () => {
@@ -1486,5 +1475,4 @@ export const flagData: FlagInfo[] = [
     { name: 'TRNC Flag', textCode: ' [TRNC 🇹🇷🇨🇾] ', component: TRNCFlag },
     { name: 'Ahwaz Flag', textCode: ' [Ahwaz 🇮🇷] ', component: AhwazFlag },
     { name: 'Tamil Eelam Flag', textCode: ' [Tamil Eelam 🐅] ', component: TamilFlag },
-    { name: 'New flags coming soon....', textCode: ' [Soon... 🚩] ', component: NewFlag },
 ];

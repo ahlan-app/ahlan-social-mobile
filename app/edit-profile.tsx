@@ -21,8 +21,6 @@ import * as ImagePicker from 'expo-image-picker';
 import { useApp } from '../store/AppContext.native';
 import { cleanHtml, uploadAvatar, updateUserProfileData } from '../services/apiService';
 import UserAvatar from '../components/native/UserAvatar';
-import { FlagIcon } from '../components/native/Icons';
-
 export default function EditProfileScreen() {
   const router = useRouter();
   const { userProfile, updateProfile, addToast } = useApp();
@@ -195,12 +193,6 @@ export default function EditProfileScreen() {
                     textAlignVertical="top"
                     className="bg-gray-800 text-white rounded-lg px-4 py-3 text-base border border-gray-700 min-h-[110px]"
                   />
-                  <Pressable
-                    onPress={() => addToast('Flag picker coming soon', 'info')}
-                    className="absolute bottom-2 right-2 p-2 rounded-full bg-gray-700"
-                  >
-                    <FlagIcon size={18} color="#9ca3af" />
-                  </Pressable>
                 </View>
               </View>
             </View>
