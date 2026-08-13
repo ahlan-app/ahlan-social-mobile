@@ -330,10 +330,9 @@ export default function HomeFeedScreen() {
   const keyExtractor = useCallback((item: Post) => item.id, []);
 
   const ListHeader = useCallback(() => {
-    if (storyGroups.length === 0 && !isLoading) return null;
     return (
       <View>
-        {/* Stories section */}
+        {/* Stories section — always visible so the "Your story" bubble shows */}
         <View className="py-3 border-b border-gray-800">
           <Text className="text-gray-500 text-xs font-semibold uppercase tracking-wide px-4 mb-2">
             Stories
@@ -343,11 +342,13 @@ export default function HomeFeedScreen() {
               onAddStory={handleAddStory}
               onViewStories={handleViewStories}
             />
-            <StoryReel
-              storyGroups={storyGroups}
-              allStories={allStories}
-              onViewStories={handleViewStories}
-            />
+            {storyGroups.length > 0 && (
+              <StoryReel
+                storyGroups={storyGroups}
+                allStories={allStories}
+                onViewStories={handleViewStories}
+              />
+            )}
           </View>
         </View>
         {/* Posts section */}
