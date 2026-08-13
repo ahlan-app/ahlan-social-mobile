@@ -15,7 +15,6 @@
 
 import React from 'react';
 import { View, Text, Pressable } from 'react-native';
-import UserAvatar from './UserAvatar';
 import { useApp } from '../../store/AppContext.native';
 import type { Story } from '../../types';
 
@@ -25,11 +24,10 @@ interface StoryCreatorProps {
 }
 
 /**
- * "Your story" button — user avatar inside a story ring with a + badge.
- * Mirrors the Instagram-style story bubble so it blends with StoryReel.
+ * "Your story" button — Instagram-style: two nested circles with a white + in the middle.
  */
 const StoryCreator: React.FC<StoryCreatorProps> = ({ onAddStory, onViewStories }) => {
-  const { userProfile, userStories } = useApp();
+  const { userStories } = useApp();
   const hasAnyStory = userStories.length > 0;
 
   const handlePress = () => {
@@ -49,31 +47,39 @@ const StoryCreator: React.FC<StoryCreatorProps> = ({ onAddStory, onViewStories }
           height: 56,
           borderRadius: 28,
           borderWidth: 2,
-          borderColor: hasAnyStory ? '#3b82f6' : '#4b5563',
+          borderColor: '#4b5563',
           padding: 2,
           alignItems: 'center',
           justifyContent: 'center',
         }}
         accessibilityLabel={hasAnyStory ? 'View your story' : 'Add to your story'}
       >
-        <UserAvatar username={userProfile?.username || ''} avatarUrl={userProfile?.profilePicture || null} size={48} />
-        {/* + badge */}
+        {/* Inner circle */}
         <View
           style={{
-            position: 'absolute',
-            bottom: -2,
-            right: -2,
-            width: 20,
-            height: 20,
-            borderRadius: 10,
-            backgroundColor: '#3b82f6',
-            borderWidth: 2,
-            borderColor: '#000',
+            width: 48,
+            height: 48,
+            borderRadius: 24,
+            borderWidth: 1,
+            borderColor: '#6b7280',
+            backgroundColor: '#111827',
             alignItems: 'center',
             justifyContent: 'center',
           }}
         >
-          <Text style={{ color: '#fff', fontSize: 13, lineHeight: 16, fontWeight: 'bold' }}>+</Text>
+          {/* White + sign */}
+          <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+            <View style={{ width: 20, height: 3, borderRadius: 2, backgroundColor: '#fff' }} />
+            <View
+              style={{
+                width: 3,
+                height: 20,
+                borderRadius: 2,
+                backgroundColor: '#fff',
+                position: 'absolute',
+              }}
+            />
+          </View>
         </View>
       </Pressable>
       <Text className="text-xs text-white w-14 text-center mt-1" numberOfLines={1}>

@@ -37,7 +37,8 @@ const StoryCircle: React.FC<{
   onPress: () => void;
   isViewed: boolean;
 }> = React.memo(({ username, avatar, onPress, isViewed }) => {
-  const borderColor = isViewed ? '#4b5563' : '#3b82f6';
+  // Viewed stories get the blue ring; unwatched stay gray
+  const borderColor = isViewed ? '#3b82f6' : '#4b5563';
 
   return (
     <View className="items-center mr-3">

@@ -332,11 +332,8 @@ export default function HomeFeedScreen() {
   const ListHeader = useCallback(() => {
     return (
       <View>
-        {/* Stories section — always visible so the "Your story" bubble shows */}
-        <View className="py-3 border-b border-gray-800">
-          <Text className="text-gray-500 text-xs font-semibold uppercase tracking-wide px-4 mb-2">
-            Stories
-          </Text>
+        {/* Stories section — compact, Instagram-style (no title) */}
+        <View className="py-2 border-b border-gray-800">
           <View className="flex-row px-2">
             <StoryCreator
               onAddStory={handleAddStory}
@@ -352,7 +349,7 @@ export default function HomeFeedScreen() {
           </View>
         </View>
         {/* Posts section */}
-        <View className="px-4 pt-4 pb-1">
+        <View className="px-4 pt-3 pb-1">
           <Text className="text-gray-500 text-xs font-semibold uppercase tracking-wide">
             Posts
           </Text>

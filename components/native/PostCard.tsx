@@ -29,7 +29,7 @@ import {
   TrashIcon,
   VerifiedIcon,
   ThreeDotsVerticalIcon,
-  ShareIOSIcon,
+  SendIcon,
   ReportIcon,
   ArrowLeftIcon,
   PencilAltIcon,
@@ -521,7 +521,7 @@ const PostCard: React.FC<PostCardProps> = ({
                 <BookmarkIcon saved={saved} color={saved ? '#3b82f6' : '#9ca3af'} size={20} />
               </Pressable>
               <Pressable onPress={() => onSharePost?.(post)} hitSlop={6}>
-                <ShareIOSIcon color="#9ca3af" size={20} />
+                <SendIcon color="#9ca3af" size={20} />
               </Pressable>
             </View>
           </View>

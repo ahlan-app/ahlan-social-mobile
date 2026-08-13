@@ -14,21 +14,26 @@
 // limitations under the License.
 
 import React, { useEffect, useState } from 'react';
-import { View, Text, Pressable, Alert, TextInput, FlatList, ActivityIndicator, Clipboard } from 'react-native';
+import { View, Text, TextInput, FlatList, ActivityIndicator, Pressable } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useApp } from '../store/AppContext.native';
-import { ShareIOSIcon } from '../components/native/Icons';
+import { SendIcon } from '../components/native/Icons';
 import { getPostById, searchUsers, sendMessage } from '../services/apiService';
+import { supabase } from '../services/supabase.native';
+import UserAvatar from '../components/native/UserAvatar';
+import { VerifiedIcon } from '../components/native/Icons';
 import type { Post } from '../types';
 
+/**
+ * Share a post to a conversation (DM). In-app only — no external sharing.
+ */
 export default function SharePostScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { togglePostRepost, addToast } = useApp();
+  const { addToast } = useApp();
 
   const [post, setPost] = useState<Post | null>(null);
-  const [sharingToMessages, setSharingToMessages] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [results, setResults] = useState<any[]>([]);
   const [sending, setSending] = useState(false);
@@ -39,41 +44,9 @@ export default function SharePostScreen() {
     getPostById(id).then((p) => setPost(p ?? null)).catch(() => setPost(null));
   }, [id]);
 
-  const handleRepost = async () => {
-    if (!id) return;
-    try {
-      await togglePostRepost(id);
-      addToast('Reposted!', 'success');
-      if (router.canGoBack()) {
-        router.back();
-      }
-    } catch (error) {
-      console.error('Failed to repost', error);
-      addToast('Failed to repost.', 'error');
-    }
-  };
-
-  const handleCopyLink = async () => {
-    if (!id) return;
-    try {
-      await Clipboard.setString(`https://ahlan.social/post/${id}`);
-      addToast('Link copied to clipboard!', 'success');
-      if (router.canGoBack()) {
-        router.back();
-      }
-    } catch (error) {
-      console.error('Failed to copy link', error);
-      addToast('Failed to copy link.', 'error');
-    }
-  };
-
-  const openShareToMessages = async () => {
-    setSharingToMessages(true);
-    setSearchQuery('');
-    setResults([]);
-    const { data: { user } } = await import('../services/supabase.native').then(m => m.supabase.auth.getUser());
-    setCurrentUserId(user?.id ?? null);
-  };
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setCurrentUserId(data.user?.id ?? null));
+  }, []);
 
   const handleSearch = async (text: string) => {
     setSearchQuery(text);
@@ -81,8 +54,13 @@ export default function SharePostScreen() {
       setResults([]);
       return;
     }
-    const users = await searchUsers(text.trim());
-    setResults(users);
+    try {
+      const users = await searchUsers(text.trim());
+      setResults(users || []);
+    } catch (error) {
+      console.error('User search error:', error);
+      setResults([]);
+    }
   };
 
   const handleSendToUser = async (receiver: any) => {
@@ -95,7 +73,6 @@ export default function SharePostScreen() {
         post,
       });
       addToast(`Post shared with @${receiver.username}!`, 'success');
-      setSharingToMessages(false);
       if (router.canGoBack()) {
         router.back();
       }
@@ -112,102 +89,59 @@ export default function SharePostScreen() {
       <Stack.Screen
         options={{
           headerShown: true,
-          title: 'Share Post',
+          title: 'Send to Messages',
           headerStyle: { backgroundColor: '#000' },
           headerTintColor: '#fff',
           presentation: 'modal',
         }}
       />
 
-      {!sharingToMessages ? (
-        <View className="flex-1 p-4">
-          <View className="bg-gray-900 rounded-xl overflow-hidden">
-            <Pressable
-              onPress={handleRepost}
-              className="flex-row items-center px-6 py-5 border-b border-gray-800 active:bg-gray-800"
-            >
-              <ShareIOSIcon color="#3b82f6" size={24} />
-              <View className="ml-4">
-                <Text className="text-white font-semibold text-base">Repost</Text>
-                <Text className="text-gray-400 text-sm">Repost to your followers</Text>
-              </View>
-            </Pressable>
-
-            <Pressable
-              onPress={openShareToMessages}
-              className="flex-row items-center px-6 py-5 border-b border-gray-800 active:bg-gray-800"
-            >
-              <View className="w-6 h-6 items-center justify-center">
-                <Text className="text-blue-400 text-sm font-bold">✉</Text>
-              </View>
-              <View className="ml-4">
-                <Text className="text-white font-semibold text-base">Send to Messages</Text>
-                <Text className="text-gray-400 text-sm">Share this post in a direct message</Text>
-              </View>
-            </Pressable>
-
-            <Pressable
-              onPress={handleCopyLink}
-              className="flex-row items-center px-6 py-5 active:bg-gray-800"
-            >
-              <View className="w-6 h-6 items-center justify-center">
-                <Text className="text-gray-400 text-sm font-bold">#</Text>
-              </View>
-              <View className="ml-4">
-                <Text className="text-white font-semibold text-base">Copy Link</Text>
-                <Text className="text-gray-400 text-sm">Copy post link to clipboard</Text>
-              </View>
-            </Pressable>
-          </View>
-        </View>
-      ) : (
-        <View className="flex-1 p-4">
-          <TextInput
-            value={searchQuery}
-            onChangeText={handleSearch}
-            placeholder="Search people to share with..."
-            placeholderTextColor="#6b7280"
-            autoFocus
-            className="bg-gray-900 text-white rounded-xl px-4 py-3 mb-3"
-          />
-          {sending ? (
-            <ActivityIndicator color="#3b82f6" style={{ marginTop: 24 }} />
-          ) : (
-            <FlatList
-              data={results}
-              keyExtractor={(item) => item.id}
-              keyboardShouldPersistTaps="handled"
-              renderItem={({ item }) => (
-                <Pressable
-                  onPress={() => handleSendToUser(item)}
-                  className="flex-row items-center px-4 py-3 border-b border-gray-800 active:bg-gray-800"
-                >
-                  <View className="flex-1">
+      <View className="flex-1 p-4">
+        <TextInput
+          value={searchQuery}
+          onChangeText={handleSearch}
+          placeholder="Search people to share with..."
+          placeholderTextColor="#6b7280"
+          autoFocus
+          className="bg-gray-900 text-white rounded-xl px-4 py-3 mb-3 border border-gray-800"
+        />
+        {sending ? (
+          <ActivityIndicator color="#3b82f6" style={{ marginTop: 24 }} />
+        ) : (
+          <FlatList
+            data={results}
+            keyExtractor={(item) => item.id}
+            keyboardShouldPersistTaps="handled"
+            ListEmptyComponent={
+              <Text className="text-gray-500 text-center mt-10">
+                {searchQuery.trim().length < 2
+                  ? 'Type at least 2 characters to search'
+                  : 'No users found'}
+              </Text>
+            }
+            renderItem={({ item }) => (
+              <Pressable
+                onPress={() => handleSendToUser(item)}
+                className="flex-row items-center px-2 py-3 active:bg-gray-900 rounded-xl"
+              >
+                <UserAvatar username={item.username} avatarUrl={item.avatar_url || item.avatar || null} size={44} />
+                <View className="ml-3 flex-1">
+                  <View className="flex-row items-center" style={{ gap: 4 }}>
                     <Text className="text-white font-semibold">@{item.username}</Text>
-                    {item.full_name ? (
-                      <Text className="text-gray-400 text-sm">{item.full_name}</Text>
-                    ) : null}
+                    {item.is_verified && <VerifiedIcon color="#3b82f6" size={14} />}
                   </View>
-                  <Text className="text-blue-400 text-sm font-semibold">Send</Text>
-                </Pressable>
-              )}
-              ListEmptyComponent={
-                searchQuery.trim().length >= 2 ? (
-                  <Text className="text-gray-500 text-center mt-8">No users found.</Text>
-                ) : (
-                  <Text className="text-gray-500 text-center mt-8">Type at least 2 characters to search.</Text>
-                )
-              }
-            />
-          )}
-          <Pressable
-            onPress={() => setSharingToMessages(false)}
-            className="mt-4 items-center py-3"
-          >
-            <Text className="text-gray-400">Cancel</Text>
-          </Pressable>
-        </View>
-      )}
+                  {item.full_name ? (
+                    <Text className="text-gray-400 text-sm" numberOfLines={1}>{item.full_name}</Text>
+                  ) : null}
+                </View>
+                <View className="bg-blue-600 p-2.5 rounded-full">
+                  <SendIcon color="#fff" size={16} />
+                </View>
+              </Pressable>
+            )}
+          />
+        )}
+      </View>
     </SafeAreaView>
   );
 }
