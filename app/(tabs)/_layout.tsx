@@ -16,6 +16,7 @@
 import React from 'react';
 import { Tabs, useRouter } from 'expo-router';
 import { View, Text } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useApp } from '../../store/AppContext.native';
 import { 
   HomeIcon, 
@@ -27,6 +28,7 @@ import {
 
 export default function TabLayout() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { notifications, unreadMessageCount } = useApp();
   const unreadNotificationCount = notifications?.filter(n => !n.is_read).length ?? 0;
   const totalBadge = unreadNotificationCount + unreadMessageCount;
@@ -42,8 +44,8 @@ export default function TabLayout() {
         tabBarStyle: {
           backgroundColor: '#000',
           borderTopColor: '#1f2937', // border-gray-800
-          height: 60,
-          paddingBottom: 8,
+          height: 60 + insets.bottom,
+          paddingBottom: Math.max(insets.bottom, 8),
           paddingTop: 8,
           // Stabil nav bar: içerikle çakışmayı önle
           elevation: 0,

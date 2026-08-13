@@ -70,7 +70,6 @@ export default function CameraScreen() {
       const realStory = await uploadStory(uploadBlob, null, userProfile.id);
       if (realStory) {
         replaceStory(localId, realStory);
-        addToast('Story shared! ✨', 'success');
       } else {
         deleteStory(localId);
         addToast('Failed to upload story.', 'error');

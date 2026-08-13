@@ -113,7 +113,6 @@ export default function StoryCreateScreen() {
           );
           if (realStory) {
             replaceStory(localId, realStory);
-            addToast('Story shared!', 'success');
           } else {
             throw new Error('Upload returned null');
           }
@@ -126,7 +125,6 @@ export default function StoryCreateScreen() {
           );
           if (realStory) {
             replaceStory(localId, realStory);
-            addToast('Story shared!', 'success');
           } else {
             throw new Error('Upload returned null');
           }

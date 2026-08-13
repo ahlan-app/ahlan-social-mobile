@@ -14,7 +14,7 @@
 // limitations under the License.
 
 import React from 'react';
-import { View, Text, Pressable } from 'react-native';
+import { View, Text, Pressable, Image } from 'react-native';
 import { useApp } from '../../store/AppContext.native';
 import type { Story } from '../../types';
 
@@ -24,7 +24,7 @@ interface StoryCreatorProps {
 }
 
 /**
- * "Your story" button — Instagram-style: two nested circles with a white + in the middle.
+ * "Your story" button — Ahlan logo inside a story ring, Instagram-style.
  */
 const StoryCreator: React.FC<StoryCreatorProps> = ({ onAddStory, onViewStories }) => {
   const { userStories } = useApp();
@@ -47,40 +47,19 @@ const StoryCreator: React.FC<StoryCreatorProps> = ({ onAddStory, onViewStories }
           height: 56,
           borderRadius: 28,
           borderWidth: 2,
-          borderColor: '#4b5563',
+          borderColor: hasAnyStory ? '#3b82f6' : '#4b5563',
           padding: 2,
           alignItems: 'center',
           justifyContent: 'center',
+          backgroundColor: '#000',
         }}
         accessibilityLabel={hasAnyStory ? 'View your story' : 'Add to your story'}
       >
-        {/* Inner circle */}
-        <View
-          style={{
-            width: 48,
-            height: 48,
-            borderRadius: 24,
-            borderWidth: 1,
-            borderColor: '#6b7280',
-            backgroundColor: '#111827',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          {/* White + sign */}
-          <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-            <View style={{ width: 20, height: 3, borderRadius: 2, backgroundColor: '#fff' }} />
-            <View
-              style={{
-                width: 3,
-                height: 20,
-                borderRadius: 2,
-                backgroundColor: '#fff',
-                position: 'absolute',
-              }}
-            />
-          </View>
-        </View>
+        <Image
+          source={require('../../assets/ahlan-logo.png')}
+          style={{ width: 48, height: 48, borderRadius: 24 }}
+          resizeMode="cover"
+        />
       </Pressable>
       <Text className="text-xs text-white w-14 text-center mt-1" numberOfLines={1}>
         Your story

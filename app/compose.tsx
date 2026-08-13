@@ -88,8 +88,7 @@ export default function ComposeScreen() {
       };
 
       await addProfilePost(newPost);
-      addToast('Post shared! ✨', 'success');
-      setTimeout(() => router.back(), 800);
+      setTimeout(() => router.back(), 400);
     } catch (error) {
       console.error('Failed to publish post', error);
       addToast('Failed to create post.', 'error');

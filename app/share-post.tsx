@@ -72,7 +72,6 @@ export default function SharePostScreen() {
         receiver_id: receiver.id,
         post,
       });
-      addToast(`Post shared with @${receiver.username}!`, 'success');
       if (router.canGoBack()) {
         router.back();
       }
