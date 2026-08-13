@@ -25,6 +25,7 @@ import {
   ScrollView,
   Alert,
 } from 'react-native';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { supabase, checkUsernameExists, ensureCurrentUserProfile } from '../../services/apiService';
@@ -39,6 +40,7 @@ export default function SignupScreen() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [birthday, setBirthday] = useState('');
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [isSuccess, setIsSuccess] = useState(false);
@@ -82,20 +84,16 @@ export default function SignupScreen() {
     }
   }, [birthday]);
 
-  const showDatePicker = () => {
-    Alert.prompt(
-      'Birthday',
-      'Enter your birthday (YYYY-MM-DD)',
-      (text) => {
-        if (text && /^\d{4}-\d{2}-\d{2}$/.test(text.trim())) {
-          setBirthday(text.trim());
-        } else if (text) {
-          Alert.alert('Invalid format', 'Please use YYYY-MM-DD format.');
-        }
-      },
-      'plain-text',
-      birthday || '',
-    );
+  const onDateChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
+    // Android: dismiss event'inde picker'ı kapat
+    if (Platform.OS === 'android') {
+      setShowDatePicker(false);
+    }
+    if (event.type === 'dismissed') return;
+    if (selectedDate) {
+      const iso = selectedDate.toISOString().slice(0, 10); // YYYY-MM-DD
+      setBirthday(iso);
+    }
   };
 
   const handleSignUp = async () => {
@@ -224,6 +222,9 @@ export default function SignupScreen() {
               <Text
                 style={{ fontFamily: 'DancingScript_700Bold' }}
                 className="text-4xl text-white"
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
               >
                 Create Account
               </Text>
@@ -281,13 +282,24 @@ export default function SignupScreen() {
               />
 
               <Pressable
-                onPress={showDatePicker}
+                onPress={() => setShowDatePicker(true)}
                 className="bg-gray-900 px-4 py-4 rounded-xl border border-gray-800"
               >
                 <Text className={birthday ? 'text-white' : 'text-gray-500'}>
                   {birthday ? formattedDate : 'Select your birthday'}
                 </Text>
               </Pressable>
+
+              {showDatePicker && (
+                <DateTimePicker
+                  value={birthday ? new Date(birthday + 'T00:00:00') : new Date(2000, 0, 1)}
+                  mode="date"
+                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                  maximumDate={new Date()}
+                  onChange={onDateChange}
+                  themeVariant="dark"
+                />
+              )}
 
               {error ? (
                 <View className="bg-red-900/20 border border-red-900/50 p-3 rounded-xl">

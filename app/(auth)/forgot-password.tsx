@@ -23,6 +23,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, Link } from 'expo-router';
@@ -98,7 +99,12 @@ export default function ForgotPasswordScreen() {
         <ScrollView contentContainerStyle={{ flexGrow: 1 }} className="px-6">
           <View className="flex-1 justify-center py-12">
             <View className="items-center mb-10">
-              <Text style={{ fontFamily: 'DancingScript_700Bold' }} className="text-5xl text-blue-500">
+              <Image
+                source={require('../../assets/icon.png')}
+                style={{ width: 88, height: 88, borderRadius: 22, marginBottom: 12 }}
+                resizeMode="cover"
+              />
+              <Text style={{ fontFamily: 'DancingScript_700Bold' }} className="text-5xl text-white" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
                 Ahlan
               </Text>
               <Text className="text-gray-400 mt-2 text-lg">Reset your password</Text>

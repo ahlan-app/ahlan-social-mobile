@@ -26,6 +26,7 @@
     "@expo-google-fonts/dancing-script": "^0.4.2",
     "@expo-google-fonts/fredoka": "^0.4.1",
     "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-community/datetimepicker": "^8.4.0",
     "@supabase/supabase-js": "^2.43.4",
     "babel-preset-expo": "~54.0.10",
     "date-fns": "^3.6.0",
