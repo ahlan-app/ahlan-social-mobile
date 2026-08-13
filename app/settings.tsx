@@ -93,16 +93,12 @@ export default function SettingsScreen() {
             </Link>
           </View>
 
-          {/* Preferences */}
+          {/* Preferences — dark mode switch removed; app is always dark */}
           <Text className="text-gray-500 font-bold mb-4 ml-1">PREFERENCES</Text>
           <View className="bg-gray-900 rounded-2xl border border-gray-800 overflow-hidden mb-8">
             <View className="flex-row items-center justify-between px-4 py-4">
-              <Text className="text-white text-base">Dark Mode</Text>
-              <Switch
-                value={theme === 'dark'}
-                onValueChange={(val) => setTheme(val ? 'dark' : 'light')}
-                trackColor={{ false: '#374151', true: '#3b82f6' }}
-              />
+              <Text className="text-white text-base">Appearance</Text>
+              <Text className="text-gray-500 text-base">Dark</Text>
             </View>
           </View>
 

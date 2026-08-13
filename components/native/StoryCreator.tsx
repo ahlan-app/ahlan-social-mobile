@@ -48,16 +48,21 @@ const StoryCreator: React.FC<StoryCreatorProps> = ({ onAddStory, onViewStories }
           borderRadius: 28,
           borderWidth: 2,
           borderColor: hasAnyStory ? '#3b82f6' : '#4b5563',
-          padding: 2,
           alignItems: 'center',
           justifyContent: 'center',
           backgroundColor: '#000',
+          overflow: 'hidden',
         }}
         accessibilityLabel={hasAnyStory ? 'View your story' : 'Add to your story'}
       >
         <Image
           source={require('../../assets/ahlan-logo.png')}
-          style={{ width: 48, height: 48, borderRadius: 24 }}
+          style={{
+            width: 56,
+            height: 56,
+            borderRadius: 28,
+            position: 'absolute',
+          }}
           resizeMode="cover"
         />
       </Pressable>

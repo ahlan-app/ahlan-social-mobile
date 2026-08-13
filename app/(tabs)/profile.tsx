@@ -36,7 +36,7 @@ import {
 import { supabase } from '../../services/supabase.native';
 import UserAvatar from '../../components/native/UserAvatar';
 import RenderUserContent from '../../components/native/RenderUserContent';
-import { VerifiedIcon } from '../../components/native/Icons';
+import { VerifiedIcon, ThreeDotsVerticalIcon } from '../../components/native/Icons';
 import PostSkeleton from '../../components/native/PostSkeleton';
 import type { Post } from '../../types';
 
@@ -186,9 +186,11 @@ export default function ProfileScreen() {
         <Text className="text-white font-bold text-xl">@{userProfile.username}</Text>
         <Pressable
           onPress={() => router.push('/settings')}
-          className="bg-gray-800 px-4 py-1.5 rounded-full"
+          className="p-2"
+          hitSlop={8}
+          accessibilityLabel="Settings"
         >
-          <Text className="text-white text-sm font-semibold">Settings</Text>
+          <ThreeDotsVerticalIcon color="#fff" size={22} />
         </Pressable>
       </View>
 

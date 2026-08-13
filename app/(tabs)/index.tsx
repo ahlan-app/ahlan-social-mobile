@@ -348,12 +348,6 @@ export default function HomeFeedScreen() {
             )}
           </View>
         </View>
-        {/* Posts section */}
-        <View className="px-4 pt-3 pb-1">
-          <Text className="text-gray-500 text-xs font-semibold uppercase tracking-wide">
-            Posts
-          </Text>
-        </View>
       </View>
     );
   }, [storyGroups, allStories, isLoading, handleAddStory, handleViewStories]);

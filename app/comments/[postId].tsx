@@ -41,7 +41,7 @@ import {
 } from '../../services/apiService';
 import UserAvatar from '../../components/native/UserAvatar';
 import RenderUserContent from '../../components/native/RenderUserContent';
-import { HeartIcon } from '../../components/native/Icons';
+import { HeartIcon, TrashIcon } from '../../components/native/Icons';
 import type { Comment } from '../../types';
 
 const EMPTY_COMMENTS: Comment[] = [];
@@ -149,6 +149,17 @@ const CommentItem: React.FC<{
                 {likesCount}
               </Text>
             </Pressable>
+            {canDelete && (
+              <Pressable
+                onPress={() => onDelete(comment.id)}
+                className="flex-row items-center"
+                style={{ gap: 4 }}
+                hitSlop={8}
+              >
+                <TrashIcon color="#9ca3af" size={16} />
+                <Text className="text-gray-500 text-sm">Delete</Text>
+              </Pressable>
+            )}
           </View>
         </View>
       </View>
