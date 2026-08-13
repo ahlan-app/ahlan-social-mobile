@@ -332,17 +332,29 @@ export default function HomeFeedScreen() {
   const ListHeader = useCallback(() => {
     if (storyGroups.length === 0 && !isLoading) return null;
     return (
-      <View className="py-3 border-b border-gray-800">
-        <View className="flex-row px-2">
-          <StoryCreator
-            onAddStory={handleAddStory}
-            onViewStories={handleViewStories}
-          />
-          <StoryReel
-            storyGroups={storyGroups}
-            allStories={allStories}
-            onViewStories={handleViewStories}
-          />
+      <View>
+        {/* Stories section */}
+        <View className="py-3 border-b border-gray-800">
+          <Text className="text-gray-500 text-xs font-semibold uppercase tracking-wide px-4 mb-2">
+            Stories
+          </Text>
+          <View className="flex-row px-2">
+            <StoryCreator
+              onAddStory={handleAddStory}
+              onViewStories={handleViewStories}
+            />
+            <StoryReel
+              storyGroups={storyGroups}
+              allStories={allStories}
+              onViewStories={handleViewStories}
+            />
+          </View>
+        </View>
+        {/* Posts section */}
+        <View className="px-4 pt-4 pb-1">
+          <Text className="text-gray-500 text-xs font-semibold uppercase tracking-wide">
+            Posts
+          </Text>
         </View>
       </View>
     );

@@ -44,7 +44,7 @@ import {
 import { supabase } from '../services/supabase.native';
 import UserAvatar from '../components/native/UserAvatar';
 import RenderUserContent from '../components/native/RenderUserContent';
-import { SearchIcon, VerifiedIcon, CheckIcon, DoubleCheckIcon } from '../components/native/Icons';
+import { SearchIcon, VerifiedIcon, CheckIcon, DoubleCheckIcon, ArrowLeftIcon } from '../components/native/Icons';
 import type { Message, Post, SimpleUser, Story } from '../types';
 
 // ─── Message Status ───────────────────────────
@@ -463,8 +463,8 @@ export default function MessagesScreen() {
             headerTintColor: '#fff',
             headerTitleStyle: { fontWeight: 'bold' },
             headerLeft: () => (
-              <Pressable onPress={closeChat} className="mr-2">
-                <Text className="text-blue-400 text-base">Back</Text>
+              <Pressable onPress={closeChat} className="mr-2 p-1 -ml-1" hitSlop={8}>
+                <ArrowLeftIcon color="#fff" size={24} />
               </Pressable>
             ),
             headerRight: () => (

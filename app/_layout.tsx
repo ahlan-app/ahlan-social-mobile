@@ -127,7 +127,16 @@ function RootLayoutNav() {
   }
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
+    <Stack
+      screenOptions={{
+        headerShown: false,
+        headerStyle: { backgroundColor: '#000' },
+        headerTintColor: '#fff',
+        headerBackTitle: '',
+        headerBackButtonDisplayMode: 'minimal',
+        headerTitleStyle: { color: '#fff', fontWeight: 'bold' },
+      }}
+    >
       <Stack.Screen name="(auth)" options={{ animation: 'fade' }} />
       <Stack.Screen name="(tabs)" options={{ animation: 'none' }} />
       <Stack.Screen name="notifications" options={{ presentation: 'modal' }} />

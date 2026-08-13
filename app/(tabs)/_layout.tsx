@@ -38,12 +38,17 @@ export default function TabLayout() {
         tabBarActiveTintColor: '#3b82f6',
         tabBarInactiveTintColor: '#6b7280',
         tabBarShowLabel: false,
+        tabBarHideOnKeyboard: true,
         tabBarStyle: {
           backgroundColor: '#000',
           borderTopColor: '#1f2937', // border-gray-800
           height: 60,
           paddingBottom: 8,
           paddingTop: 8,
+          // Stabil nav bar: içerikle çakışmayı önle
+          elevation: 0,
+          shadowOpacity: 0,
+          borderTopWidth: 1,
         },
       }}
     >

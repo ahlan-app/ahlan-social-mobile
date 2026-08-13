@@ -38,6 +38,7 @@ import {
   FlipCameraIcon,
   ImageIcon,
   XIcon,
+  ArrowLeftIcon,
 } from '../components/native/Icons';
 import type { Story } from '../types';
 
@@ -304,8 +305,10 @@ export default function StoryCreateScreen() {
               setCaption('');
               setView('options');
             }}
+            className="p-2 -ml-2"
+            hitSlop={8}
           >
-            <Text className="text-white text-base">Back</Text>
+            <ArrowLeftIcon color="white" size={24} />
           </Pressable>
           <Pressable
             onPress={() => handleUpload({ imageUri: imageSrc })}
@@ -357,8 +360,8 @@ export default function StoryCreateScreen() {
 
         {/* Header */}
         <View className="px-4 py-3 flex-row justify-between items-center">
-          <Pressable onPress={() => setView('options')}>
-            <Text className="text-white text-base">Back</Text>
+          <Pressable onPress={() => setView('options')} className="p-2 -ml-2" hitSlop={8}>
+            <ArrowLeftIcon color="white" size={24} />
           </Pressable>
           <Pressable
             onPress={() => {

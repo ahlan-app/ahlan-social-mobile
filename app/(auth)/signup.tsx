@@ -85,11 +85,11 @@ export default function SignupScreen() {
   }, [birthday]);
 
   const onDateChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
-    // Android: dismiss event'inde picker'ı kapat
-    if (Platform.OS === 'android') {
+    if (event.type === 'dismissed') {
+      // iOS cancel / Android back — close the spinner
       setShowDatePicker(false);
+      return;
     }
-    if (event.type === 'dismissed') return;
     if (selectedDate) {
       const iso = selectedDate.toISOString().slice(0, 10); // YYYY-MM-DD
       setBirthday(iso);
@@ -291,14 +291,22 @@ export default function SignupScreen() {
               </Pressable>
 
               {showDatePicker && (
-                <DateTimePicker
-                  value={birthday ? new Date(birthday + 'T00:00:00') : new Date(2000, 0, 1)}
-                  mode="date"
-                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                  maximumDate={new Date()}
-                  onChange={onDateChange}
-                  themeVariant="dark"
-                />
+                <View className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+                  <DateTimePicker
+                    value={birthday ? new Date(birthday + 'T00:00:00') : new Date(2000, 0, 1)}
+                    mode="date"
+                    display="spinner"
+                    maximumDate={new Date()}
+                    onChange={onDateChange}
+                    themeVariant="dark"
+                  />
+                  <Pressable
+                    onPress={() => setShowDatePicker(false)}
+                    className="py-3 items-center border-t border-gray-800"
+                  >
+                    <Text className="text-blue-500 font-bold text-base">Done</Text>
+                  </Pressable>
+                </View>
               )}
 
               {error ? (

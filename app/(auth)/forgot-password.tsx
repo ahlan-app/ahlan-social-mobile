@@ -101,7 +101,7 @@ export default function ForgotPasswordScreen() {
             <View className="items-center mb-10">
               <Image
                 source={require('../../assets/icon.png')}
-                style={{ width: 88, height: 88, borderRadius: 22, marginBottom: 12 }}
+                style={{ width: 88, height: 88, borderRadius: 44, marginBottom: 12 }}
                 resizeMode="cover"
               />
               <Text style={{ fontFamily: 'DancingScript_700Bold' }} className="text-5xl text-white" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
