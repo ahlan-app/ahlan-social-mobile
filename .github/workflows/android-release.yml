@@ -1,0 +1,161 @@
+name: Android Release (AAB + APK)
+
+# Builds a Play Store ready, upload-key signed Android App Bundle (.aab) and a
+# signed APK for direct download, then attaches both to a GitHub Release.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   EXPO_PUBLIC_SUPABASE_URL          Supabase project URL
+#   EXPO_PUBLIC_SUPABASE_ANON_KEY     Supabase anon (public) key
+#   ANDROID_UPLOAD_KEYSTORE_BASE64    base64 of the upload keystore (.jks)
+#   ANDROID_UPLOAD_KEYSTORE_PASSWORD  keystore password
+#   ANDROID_UPLOAD_KEY_ALIAS          key alias
+#   ANDROID_UPLOAD_KEY_PASSWORD       key password
+#
+# Trigger: push a tag matching app.json's version (e.g. v1.0.9), or run it
+# manually from the Actions tab.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (default: v<app.json version>)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      NODE_ENV: production
+      EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+      ANDROID_UPLOAD_KEYSTORE_BASE64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+      AHLAN_UPLOAD_STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
+      AHLAN_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+      AHLAN_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+      AHLAN_REQUIRE_RELEASE_SIGNING: 'true'
+
+    steps:
+      - name: Check required secrets
+        run: |
+          missing=0
+          for name in EXPO_PUBLIC_SUPABASE_URL EXPO_PUBLIC_SUPABASE_ANON_KEY \
+                      ANDROID_UPLOAD_KEYSTORE_BASE64 AHLAN_UPLOAD_STORE_PASSWORD \
+                      AHLAN_UPLOAD_KEY_ALIAS AHLAN_UPLOAD_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required secret for $name"
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Resolve version and tag
+        id: version
+        run: |
+          VERSION=$(node -p "require('./app.json').expo.version")
+          VERSION_CODE=$(node -p "require('./app.json').expo.android.versionCode")
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="${{ inputs.tag }}"
+            [ -z "$TAG" ] && TAG="v${VERSION}"
+          fi
+          if [ "$TAG" != "v${VERSION}" ]; then
+            echo "::error::Tag $TAG does not match app.json version v${VERSION}"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck and tests
+        run: |
+          npx tsc --noEmit
+          npx jest --ci
+
+      - name: Expo prebuild (android)
+        run: npx expo prebuild --platform android --no-install --clean
+
+      - name: Restore upload keystore
+        run: |
+          echo "$ANDROID_UPLOAD_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/upload.jks"
+          echo "AHLAN_UPLOAD_STORE_FILE=$RUNNER_TEMP/upload.jks" >> "$GITHUB_ENV"
+
+      - name: Build AAB and APK
+        working-directory: android
+        run: ./gradlew --no-daemon bundleRelease assembleRelease
+
+      - name: Verify signatures and 16 KB alignment
+        run: |
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          AAB=android/app/build/outputs/bundle/release/app-release.aab
+          # Google Play requires 16 KB page-size compatible native libraries.
+          "$BUILD_TOOLS/zipalign" -c -P 16 -v 4 "$APK" > /dev/null
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" | tee apk-certs.txt
+          jarsigner -verify -certs "$AAB" | tail -n 3
+          if grep -q "CN=Android Debug" apk-certs.txt || jarsigner -verify -verbose -certs "$AAB" | grep -q "CN=Android Debug"; then
+            echo "::error::Release artifacts are signed with the debug key"
+            exit 1
+          fi
+
+      - name: Collect release files
+        run: |
+          mkdir -p dist
+          cp android/app/build/outputs/bundle/release/app-release.aab "dist/AhlanSocial-v${{ steps.version.outputs.version }}.aab"
+          cp android/app/build/outputs/apk/release/app-release.apk "dist/AhlanSocial-v${{ steps.version.outputs.version }}.apk"
+          (cd dist && sha256sum *.aab *.apk > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          rm -f "$RUNNER_TEMP/upload.jks"
+          NOTES="docs/releases/${{ steps.version.outputs.tag }}.md"
+          if [ -f "$NOTES" ]; then
+            cp "$NOTES" RELEASE_NOTES.md
+          else
+            printf '# Ahlan Social %s\n\n- AAB (Google Play): AhlanSocial-v%s.aab\n- APK (direct install): AhlanSocial-v%s.apk\n- versionCode %s\n' \
+              "${{ steps.version.outputs.tag }}" "${{ steps.version.outputs.version }}" "${{ steps.version.outputs.version }}" "${{ steps.version.outputs.version_code }}" > RELEASE_NOTES.md
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AhlanSocial-v${{ steps.version.outputs.version }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Ahlan Social ${{ steps.version.outputs.tag }} — Android (AAB + APK)
+          body_path: RELEASE_NOTES.md
+          files: |
+            dist/AhlanSocial-v${{ steps.version.outputs.version }}.aab
+            dist/AhlanSocial-v${{ steps.version.outputs.version }}.apk
+            dist/SHA256SUMS.txt
+          fail_on_unmatched_files: true
