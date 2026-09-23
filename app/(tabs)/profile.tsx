@@ -35,6 +35,7 @@ import {
   getFollowingCount,
 } from '../../services/apiService';
 import { queryKeys } from '../../services/queryKeys';
+import { refreshWhileOnline } from '../../services/queryClient';
 import { supabase } from '../../services/supabase.native';
 import UserAvatar from '../../components/native/UserAvatar';
 import RenderUserContent from '../../components/native/RenderUserContent';
@@ -247,13 +248,13 @@ export default function ProfileScreen() {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await Promise.all([
+      await refreshWhileOnline(() => Promise.all([
         myId ? refetchPosts() : null,
         myId ? refetchReposts() : null,
         myId ? refetchSaved() : null,
         myId ? refetchCounts() : null,
         refreshAllData(),
-      ]);
+      ]));
     } finally {
       setRefreshing(false);
     }

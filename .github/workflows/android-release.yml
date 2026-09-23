@@ -39,6 +39,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    defaults:
+      run:
+        # bash -eo pipefail: a failing command inside a pipe fails the step
+        shell: bash
     env:
       # NOTE: do NOT set NODE_ENV=production at job level: npm ci would then
       # skip devDependencies (typescript, jest, tailwindcss) and the build fails.
@@ -104,6 +108,14 @@ jobs:
           fi
           if [ "$TAG" != "v${VERSION}" ]; then
             echo "::error::Tag $TAG does not match app.json version v${VERSION}"
+            exit 1
+          fi
+          # Never replace the files of an existing release with another commit's build.
+          # Prefer the peeled commit (^{}) of an annotated tag over the tag object id.
+          EXISTING=$(git ls-remote --tags origin "refs/tags/$TAG" "refs/tags/$TAG^{}" \
+            | awk '/\^\{\}$/ { peeled = $1 } !/\^\{\}$/ { if (!plain) plain = $1 } END { print (peeled ? peeled : plain) }')
+          if [ -n "$EXISTING" ] && [ "$EXISTING" != "$GITHUB_SHA" ]; then
+            echo "::error::Tag $TAG already exists at $EXISTING (this run is $GITHUB_SHA); bump the version instead"
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"

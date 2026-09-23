@@ -21,6 +21,7 @@ import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-quer
 import { useApp } from '../../store/AppContext.native';
 import { getPostById } from '../../services/apiService';
 import { queryKeys } from '../../services/queryKeys';
+import { refreshWhileOnline } from '../../services/queryClient';
 import { supabase } from '../../services/supabase.native';
 import PostCard from '../../components/native/PostCard';
 import type { Post } from '../../types';
@@ -120,7 +121,7 @@ export default function PostDetailScreen() {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await refetchPost();
+      await refreshWhileOnline(() => refetchPost());
     } catch (error) {
       console.error('Failed to load post', error);
     } finally {

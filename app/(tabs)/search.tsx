@@ -35,6 +35,7 @@ import {
   searchUsers,
 } from '../../services/apiService';
 import { queryKeys } from '../../services/queryKeys';
+import { refreshWhileOnline } from '../../services/queryClient';
 import UserAvatar from '../../components/native/UserAvatar';
 import { SearchIcon, VerifiedIcon, HeartIcon, CommentIcon } from '../../components/native/Icons';
 import RenderUserContent from '../../components/native/RenderUserContent';
@@ -155,7 +156,7 @@ const ExploreTile: React.FC<{ post: Post; onPress: () => void }> = React.memo(({
 
 export default function SearchScreen() {
   const router = useRouter();
-  const { isUserBlocked, isUserIdBlocked } = useApp();
+  const { isUserBlocked, isUserIdBlocked, refreshBlockRelations } = useApp();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedTerm, setDebouncedTerm] = useState('');
@@ -184,7 +185,7 @@ export default function SearchScreen() {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await Promise.all([refetchTrending(), refetchHashtags()]);
+      await refreshWhileOnline(() => Promise.all([refetchTrending(), refetchHashtags()]));
     } finally {
       setRefreshing(false);
     }
@@ -203,7 +204,12 @@ export default function SearchScreen() {
 
   const userSearchQuery = useQuery({
     queryKey: queryKeys.userSearch(userSearchTerm),
-    queryFn: () => searchUsers(userSearchTerm),
+    // Refresh the block relations with every search, so someone who just
+    // blocked me never shows up in my results.
+    queryFn: async () => {
+      const [rows] = await Promise.all([searchUsers(userSearchTerm), refreshBlockRelations()]);
+      return rows;
+    },
     enabled: isSearching && activeFilter === 'users' && userSearchTerm.length > 0,
     placeholderData: keepPreviousData,
     gcTime: USER_SEARCH_GC_TIME,

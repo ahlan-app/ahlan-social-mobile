@@ -838,8 +838,9 @@ export const getTrendingPosts = async (): Promise<Post[]> => {
         if (!postsData) return [];
         return postsData.map(mapPostData);
     } catch (error) {
+        // Thrown so a failed refresh keeps the cached explore grid.
         console.error("Error fetching trending posts:", (error as Error).message || error);
-        return [];
+        throw error;
     }
 };
 
@@ -1075,9 +1076,12 @@ export const checkUsernameExists = async (username: string): Promise<boolean> =>
 // =========================================================
 export const getStories = async (): Promise<Story[]> => {
     try {
-        // Get current user — don't return early if null, RLS will handle it
-        const { data: { user } } = await supabase.auth.getUser();
-        
+        // Stored session (no network call); a failed lookup throws so the cached
+        // story row is kept instead of being replaced by an empty one.
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) throw sessionError;
+        const user = session?.user;
+
         // Get IDs of users the current user follows
         const followingIds: string[] = [];
         if (user) {
@@ -1085,9 +1089,8 @@ export const getStories = async (): Promise<Story[]> => {
                 .from('follows')
                 .select('followed_id')
                 .eq('follower_id', user.id);
-            if (!followingError && followingData) {
-                followingIds.push(...followingData.map(f => f.followed_id));
-            }
+            if (followingError) throw followingError;
+            followingIds.push(...(followingData ?? []).map(f => f.followed_id));
         }
         
         // Fetch stories from followed users AND the current user
@@ -1104,23 +1107,21 @@ export const getStories = async (): Promise<Story[]> => {
             .gte('created_at', twentyFourHoursAgo)
             .order('created_at', { ascending: false });
 
-        if (error) {
-            console.error("Error fetching stories", (error as Error).message || error);
-            return [];
-        }
+        if (error) throw error;
 
         return (data || []).map((s: any) => ({
             id: s.id,
             userId: s.user_id,
-            username: s.profiles.username,
-            avatar: s.profiles.avatar_url,
+            username: s.profiles?.username ?? '',
+            avatar: s.profiles?.avatar_url ?? null,
             timestamp: s.created_at,
             imageUrl: s.media_url,
             content: s.caption,
         }));
     } catch (error) {
+        // Thrown (not []) so a failed refresh keeps the cached story row.
         console.error("Error in getStories logic:", (error as Error).message || error);
-        return [];
+        throw error;
     }
 };
 
@@ -1417,7 +1418,7 @@ export const getUserPosts = async (userId: string): Promise<Post[]> => {
         .eq('user_id', userId)
         .order('created_at', { ascending: false });
     
-    if (error) return [];
+    if (error) throw error; // keep cached posts on failure
     return (data || []).map(mapPostData);
 };
 
@@ -1453,7 +1454,7 @@ export const getUserReposts = async (userId: string): Promise<Post[]> => {
 
     } catch (error) {
         console.error("Error fetching user reposts:", (error as Error).message || error);
-        return [];
+        throw error; // keep cached list on failure
     }
 };
 
@@ -1490,7 +1491,7 @@ export const getSavedPosts = async (userId: string): Promise<Post[]> => {
 
     } catch (error) {
         console.error("Error fetching saved posts:", (error as Error).message || error);
-        return [];
+        throw error; // keep cached list on failure
     }
 };
 
@@ -1601,12 +1602,14 @@ export const invalidateProfileCache = (username?: string | null): void => {
 
 export const getFollowerCount = async (userId: string): Promise<number> => {
     const { count, error } = await supabase.from('follows').select('*', { count: 'exact', head: true }).eq('followed_id', userId);
-    return error ? 0 : count || 0;
+    if (error) throw error; // keep cached counts on failure
+    return count || 0;
 };
 
 export const getFollowingCount = async (userId: string): Promise<number> => {
     const { count, error } = await supabase.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', userId);
-    return error ? 0 : count || 0;
+    if (error) throw error; // keep cached counts on failure
+    return count || 0;
 };
 
 export const getFollowingList = async (userId: string): Promise<string[]> => {
@@ -1817,7 +1820,8 @@ export const getPostOwnerId = async (postId: string): Promise<string | null> => 
         .select('user_id')
         .eq('id', postId)
         .maybeSingle();
-    if (error || !data) return null;
+    if (error) throw error; // a transient error must not hide moderation
+    if (!data) return null;
     return (data as { user_id: string }).user_id ?? null;
 };
 
@@ -1828,7 +1832,7 @@ export const getCommentsForPost = async (postId: string): Promise<Comment[]> => 
         .eq('post_id', postId)
         .order('created_at', { ascending: false });
 
-    if (error) return [];
+    if (error) throw error; // keep cached comments on failure
     return (data || []).map((c: any) => ({
         id: c.id,
         userId: c.user_id,
@@ -1887,7 +1891,7 @@ export const getAllHashtags = async (): Promise<Hashtag[]> => {
 
     if (error) {
         console.error('Error fetching posts for hashtags:', error.message);
-        return [];
+        throw error;
     }
 
     if (!data || data.length === 0) return [];
@@ -1942,7 +1946,7 @@ export const getSmartUserSuggestions = async(userId: string): Promise<any[]> => 
 
     if (followingError) {
         console.error('Error fetching following list for suggestions:', followingError.message);
-        return [];
+        throw followingError;
     }
 
     // Create a list of user IDs to exclude from suggestions (followed users + the user themselves).
@@ -1959,7 +1963,7 @@ export const getSmartUserSuggestions = async(userId: string): Promise<any[]> => 
 
     if (suggestionsError) {
         console.error('Error fetching user suggestions:', suggestionsError.message);
-        return [];
+        throw suggestionsError;
     }
 
     // 3. Map the fetched profile data to the structure expected by the UserSuggestions component.

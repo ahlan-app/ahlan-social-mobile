@@ -35,6 +35,7 @@ import {
     invalidateAfterBlockChange,
     invalidateAfterFollowChange,
     invalidateAfterPostChange,
+    removePostFromCaches,
 } from '../services/queryClient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
@@ -131,6 +132,9 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 // Pre-1.0.9 blocks were usernames stored only on this device; they are
 // migrated to the server once and then removed.
 const LEGACY_BLOCKED_USERS_KEY = 'ahlan-blocked-users';
+// The old list has no account id; the first account that signs in after the
+// update owns it, so it is never applied to (or migrated onto) other accounts.
+const LEGACY_BLOCKED_USERS_OWNER_KEY = 'ahlan-blocked-users-owner';
 const blockCacheKey = (userId: string) => `ahlan-block-relations-v2:${userId}`;
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -173,29 +177,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const userIdRef = useRef('');
     userIdRef.current = state.userProfile.id;
 
-    // Load pre-1.0.9 device-only blocks so they keep filtering until migrated.
-    useEffect(() => {
-        const loadLegacyBlocks = async () => {
-            try {
-                const raw = await AsyncStorage.getItem(LEGACY_BLOCKED_USERS_KEY);
-                const parsed = raw ? JSON.parse(raw) : [];
-                legacyBlockedRef.current = Array.isArray(parsed)
-                    ? parsed.filter((item: unknown): item is string => typeof item === 'string')
-                    : [];
-                if (legacyBlockedRef.current.length > 0) {
-                    setState(prevState => ({
-                        ...prevState,
-                        blocks: withLegacyUsernames(prevState.blocks, legacyBlockedRef.current),
-                    }));
-                }
-            } catch (e) {
-                console.error("Could not read legacy blocked users from AsyncStorage", e);
-            }
-        };
-
-        loadLegacyBlocks();
-    }, []);
-
     const refreshBlockRelations = useCallback(async (userIdArg?: string) => {
         const userId = userIdArg || userIdRef.current;
         if (!userId) return;
@@ -207,10 +188,33 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         AsyncStorage.setItem(blockCacheKey(userId), JSON.stringify(rows)).catch(() => {});
     }, []);
 
+    /** Loads the legacy list for this account (empty when another account owns it). */
+    const loadLegacyBlocksFor = useCallback(async (userId: string): Promise<string[]> => {
+        try {
+            const [raw, owner] = await Promise.all([
+                AsyncStorage.getItem(LEGACY_BLOCKED_USERS_KEY),
+                AsyncStorage.getItem(LEGACY_BLOCKED_USERS_OWNER_KEY),
+            ]);
+            const parsed = raw ? JSON.parse(raw) : [];
+            const names = Array.isArray(parsed)
+                ? parsed.filter((item: unknown): item is string => typeof item === 'string')
+                : [];
+            if (names.length === 0) return [];
+            if (owner && owner !== userId) return [];
+            if (!owner) await AsyncStorage.setItem(LEGACY_BLOCKED_USERS_OWNER_KEY, userId);
+            return names;
+        } catch {
+            return [];
+        }
+    }, []);
+
     // One-time: push device-only username blocks to the server.
     const migrateLegacyBlocks = useCallback(async (myId: string) => {
+        legacyBlockedRef.current = await loadLegacyBlocksFor(myId);
         const names = legacyBlockedRef.current;
         if (names.length === 0) return;
+        // Keep filtering them locally until the server has them.
+        setState(prevState => ({ ...prevState, blocks: withLegacyUsernames(prevState.blocks, names) }));
         const { data, error } = await supabase.from('profiles').select('id, username').in('username', names);
         if (error) return;
         const results = await Promise.allSettled(
@@ -220,9 +224,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         );
         if (results.every(r => r.status === 'fulfilled')) {
             legacyBlockedRef.current = [];
-            AsyncStorage.removeItem(LEGACY_BLOCKED_USERS_KEY).catch(() => {});
+            AsyncStorage.multiRemove([LEGACY_BLOCKED_USERS_KEY, LEGACY_BLOCKED_USERS_OWNER_KEY]).catch(() => {});
         }
-    }, []);
+    }, [loadLegacyBlocksFor]);
 
     // Fetches notifications and messages, and subscribes to real-time updates.
     useEffect(() => {
@@ -487,6 +491,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             } else if (event === 'SIGNED_OUT') {
                 // Cached feeds, profiles and lists belong to the old account.
                 void clearQueryCache();
+                legacyBlockedRef.current = [];
                 setState(prevState => ({
                     ...prevState,
                     likedPosts: new Set(),
@@ -786,6 +791,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }, [addToast, state.userProfile.id]);
 
     const deleteProfilePost = useCallback((postId: string) => {
+        // Gone from every cached list right away (also posts deleted by an admin).
+        removePostFromCaches(postId);
         // Optimistic update
         // FIX: Explicitly type prevState as AppState.
         setState((prevState: AppState) => ({
@@ -995,7 +1002,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return !!name && state.blocks.blockedByUsernames.has(name);
     }, [state.blocks]);
 
-    const setLocalBlock = useCallback((id: string, name: string, blocked: boolean) => {
+    const setLocalBlock = useCallback((id: string, name: string, blocked: boolean, restoreFollow = false) => {
         setState((prevState: AppState) => {
             const blockedIds = new Set(prevState.blocks.blockedIds);
             const blockedUsernames = new Set(prevState.blocks.blockedUsernames);
@@ -1007,6 +1014,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             } else {
                 blockedIds.delete(id);
                 blockedUsernames.delete(name);
+                if (restoreFollow) followedUsernames.add(name);
             }
             return { ...prevState, followedUsernames, blocks: { ...prevState.blocks, blockedIds, blockedUsernames } };
         });
@@ -1030,6 +1038,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (!targetId || targetId === myId) return false;
 
         const wasBlocked = state.blocks.blockedIds.has(targetId) || state.blocks.blockedUsernames.has(name);
+        const wasFollowing = state.followedUsernames.has(name);
         setLocalBlock(targetId, name, !wasBlocked);
         try {
             if (wasBlocked) {
@@ -1048,11 +1057,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             return true;
         } catch (error) {
             console.error('Failed to toggle block:', error);
-            setLocalBlock(targetId, name, wasBlocked);
+            // Roll back, including the follow removed optimistically by a failed block.
+            setLocalBlock(targetId, name, wasBlocked, !wasBlocked && wasFollowing);
             addToast(wasBlocked ? 'Could not unblock this account.' : 'Could not block this account.', 'error');
             return false;
         }
-    }, [state.userProfile.id, state.blocks, addToast, refreshBlockRelations, setLocalBlock]);
+    }, [state.userProfile.id, state.blocks, state.followedUsernames, addToast, refreshBlockRelations, setLocalBlock]);
 
     const toggleVideoLike = useCallback((videoId: string) => {
         triggerHapticFeedback();

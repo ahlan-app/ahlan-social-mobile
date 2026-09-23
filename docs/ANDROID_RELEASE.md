@@ -24,6 +24,8 @@ page-size aligned.
    commit it: every future update (Play and APK) must be signed with it.
    v1.0.0–v1.0.8 used an older key that is no longer available, so phones
    with v1.0.8 installed must uninstall it once before installing v1.0.9.
+   Blocks made before v1.0.9 were stored only on the device and are lost on
+   this uninstall; users must block those accounts again.
 
 2. Repository secrets (Settings → Secrets and variables → Actions):
 

@@ -78,11 +78,34 @@ export function shouldPersistQuery(query: Pick<Query, 'queryKey' | 'state'>): bo
 }
 
 // Online state from NetInfo: queries pause offline and refetch on reconnect.
+// Only isConnected is used: NetInfo's reachability probe can report false on
+// working networks (blocked probe host, captive checks), which would pause
+// every query.
 onlineManager.setEventListener((setOnline) =>
   NetInfo.addEventListener((state) => {
-    setOnline(state.isConnected !== false && state.isInternetReachable !== false);
+    setOnline(state.isConnected !== false);
   }),
 );
+
+/**
+ * Pull-to-refresh helper: refetches that are paused offline never settle, so
+ * this resolves right away when offline, or as soon as the connection drops.
+ */
+export function refreshWhileOnline(work: () => Promise<unknown>): Promise<void> {
+  if (!onlineManager.isOnline()) return Promise.resolve();
+  return new Promise((resolve) => {
+    const unsubscribe = onlineManager.subscribe((online) => {
+      if (!online) {
+        unsubscribe();
+        resolve();
+      }
+    });
+    work().catch(() => {}).finally(() => {
+      unsubscribe();
+      resolve();
+    });
+  });
+}
 
 // "Window focus" on React Native = the app returning to the foreground.
 if (Platform.OS !== 'web') {
@@ -126,6 +149,41 @@ export function invalidateAfterBlockChange(): Promise<unknown> {
       'comments', 'trending', 'userSearch', 'userList', 'chatList']
       .map(root => queryClient.invalidateQueries({ queryKey: [root] })),
   );
+}
+
+type PostLike = { id: string; username?: string };
+const POST_LIST_ROOTS = ['feed', 'userPosts', 'userReposts', 'savedPosts', 'trending'] as const;
+
+/** Removes a deleted post from every cached list and drops its detail query. */
+export function removePostFromCaches(postId: string): void {
+  for (const root of POST_LIST_ROOTS) {
+    queryClient.setQueriesData<unknown>({ queryKey: [root] }, (data: unknown) => {
+      if (Array.isArray(data)) {
+        return (data as PostLike[]).some(p => p?.id === postId) ? (data as PostLike[]).filter(p => p?.id !== postId) : data;
+      }
+      const infinite = data as { pages?: { posts?: PostLike[] }[]; pageParams?: unknown[] } | undefined;
+      if (infinite && Array.isArray(infinite.pages)) {
+        return {
+          ...infinite,
+          pages: infinite.pages.map(page => (page?.posts ? { ...page, posts: page.posts.filter(p => p?.id !== postId) } : page)),
+        };
+      }
+      return data;
+    });
+  }
+  queryClient.removeQueries({ queryKey: queryKeys.post(postId) });
+}
+
+/** My profile (name, username, bio, avatar) changed: everything that shows me. */
+export function invalidateAfterProfileChange(viewerId?: string | null, usernames: (string | null | undefined)[] = []): Promise<unknown> {
+  trimFeedToFirstPage();
+  return Promise.all([
+    ...usernames.filter((u): u is string => !!u).map(u => queryClient.invalidateQueries({ queryKey: queryKeys.profile(u) })),
+    viewerId ? queryClient.invalidateQueries({ queryKey: queryKeys.userPosts(viewerId) }) : Promise.resolve(),
+    queryClient.invalidateQueries({ queryKey: ['feed'] }),
+    queryClient.invalidateQueries({ queryKey: ['comments'] }),
+    queryClient.invalidateQueries({ queryKey: ['userList'] }),
+  ]);
 }
 
 /** Own post created, edited or deleted (pass the post id for edits/deletes). */

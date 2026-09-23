@@ -41,6 +41,7 @@ import {
   type FeedPage,
 } from '../../services/apiService';
 import { queryKeys } from '../../services/queryKeys';
+import { refreshWhileOnline } from '../../services/queryClient';
 import { supabase } from '../../services/supabase.native';
 import PostCard from '../../components/native/PostCard';
 import PostSkeleton from '../../components/native/PostSkeleton';
@@ -55,7 +56,6 @@ const STORY_LIFETIME_MS = 24 * 60 * 60 * 1000;
 // How long after a pull-to-refresh / follow change an empty stories result is
 // taken at face value (a window rather than a one-shot flag, so a fetch that
 // gets cancelled and restarted by an invalidation still trusts it).
-const TRUST_EMPTY_STORIES_MS = 15 * 1000;
 
 const dedupeStoriesById = (stories: Story[]): Story[] => {
   const seen = new Set<string>();
@@ -204,37 +204,13 @@ export default function HomeFeedScreen() {
 
   // ---- Stories --------------------------------------------------------------
   const storiesKey = useMemo(() => queryKeys.stories(viewerId ?? ''), [viewerId]);
-  // getStories() resolves [] on network errors too. Unless an empty reel is
-  // expected (pull-to-refresh, follow change), a sudden [] while cached stories
-  // are still live is treated as a failed fetch so the cached reel stays.
-  const trustEmptyStoriesUntilRef = useRef(0);
-  const trustEmptyStories = useCallback(() => {
-    trustEmptyStoriesUntilRef.current = Date.now() + TRUST_EMPTY_STORIES_MS;
-  }, []);
+  // getStories() throws on errors, so a failed refresh keeps the cached reel.
   const storiesQuery = useQuery({
     queryKey: storiesKey,
-    queryFn: async () => {
-      const stories = await getStories();
-      if (stories.length === 0 && Date.now() > trustEmptyStoriesUntilRef.current) {
-        const cached = queryClient.getQueryData<Story[]>(storiesKey) ?? [];
-        const now = Date.now();
-        if (cached.some(story => isStoryLive(story, now))) {
-          throw new Error('Stories refresh returned nothing; keeping cached stories');
-        }
-      }
-      return stories;
-    },
+    queryFn: getStories,
     enabled: !!viewerId,
   });
   const { data: storiesData, refetch: refetchStories } = storiesQuery;
-
-  const followedUsernamesRef = useRef(followedUsernames);
-  useEffect(() => {
-    if (followedUsernamesRef.current === followedUsernames) return;
-    followedUsernamesRef.current = followedUsernames;
-    // Follow list changed: the stories refetch may legitimately be empty.
-    trustEmptyStories();
-  }, [followedUsernames, trustEmptyStories]);
 
   const { storyGroups, allStories } = useMemo(() => {
     const now = Date.now();
@@ -402,7 +378,6 @@ export default function HomeFeedScreen() {
           const next = payload.new as { follower_id?: string } | null;
           const prev = payload.old as { follower_id?: string } | null;
           if (next?.follower_id === viewerId || prev?.follower_id === viewerId) {
-            trustEmptyStories();
             invalidateStories();
           }
         },
@@ -412,7 +387,7 @@ export default function HomeFeedScreen() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [viewerId, invalidateStories, trustEmptyStories]);
+  }, [viewerId, invalidateStories]);
 
   useEffect(() => {
     if (!viewerId) return;
@@ -434,7 +409,6 @@ export default function HomeFeedScreen() {
   const onRefresh = useCallback(async () => {
     if (!viewerId) return;
     setRefreshing(true);
-    trustEmptyStories();
     try {
       // Like the old loadFeed(): pull-to-refresh restarts from the newest page
       // instead of re-downloading every page scrolled so far.
@@ -442,15 +416,15 @@ export default function HomeFeedScreen() {
       patchQueryData<FeedData>(feedKey, data => (data.pages.length > 1
         ? { pages: data.pages.slice(0, 1), pageParams: data.pageParams.slice(0, 1) }
         : data));
-      await Promise.all([
+      await refreshWhileOnline(() => Promise.all([
         refetchFeed(),
         refetchStories(),
         wantsSuggestions ? refetchSuggestions() : Promise.resolve(),
-      ]);
+      ]));
     } finally {
       setRefreshing(false);
     }
-  }, [viewerId, patchQueryData, feedKey, refetchFeed, refetchStories, refetchSuggestions, wantsSuggestions, trustEmptyStories]);
+  }, [viewerId, patchQueryData, feedKey, refetchFeed, refetchStories, refetchSuggestions, wantsSuggestions]);
 
   const loadMore = useCallback(() => {
     if (!hasNextPage || isFetchingNextPage) return;

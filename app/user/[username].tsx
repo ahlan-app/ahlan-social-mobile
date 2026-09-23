@@ -40,7 +40,7 @@ import {
   reportUser,
 } from '../../services/apiService';
 import { queryKeys } from '../../services/queryKeys';
-import { QUERY_STALE_TIME } from '../../services/queryClient';
+import { QUERY_STALE_TIME, refreshWhileOnline } from '../../services/queryClient';
 import { supabase } from '../../services/supabase.native';
 import UserAvatar from '../../components/native/UserAvatar';
 import RenderUserContent from '../../components/native/RenderUserContent';
@@ -151,25 +151,22 @@ export default function UserProfileScreen() {
   const profileQuery = useQuery({
     queryKey: queryKeys.profile(username || ''),
     queryFn: async (): Promise<UserProfileType | null> => {
-      const fresh = await getUserProfile(username as string, { force: true });
-      if (fresh) return fresh;
-      // getUserProfile also resolves null on network errors: keep a profile we
-      // already know instead of replacing it with "not found".
-      if (queryClient.getQueryData<UserProfileType | null>(queryKeys.profile(username as string))) {
-        throw new Error('Could not refresh this profile.');
-      }
-      return null;
+      // getUserProfile throws on network errors (cached data is kept) and
+      // resolves null only when the account does not exist.
+      return getUserProfile(username as string, { force: true });
     },
     enabled: !!username,
-    // A "not found" result is never fresh: getUserProfile also returns null on
-    // network errors, so re-check on every visit instead of for 5 minutes.
+    // A "not found" result is never fresh: re-check on every visit.
     staleTime: query => (query.state.data ? QUERY_STALE_TIME : 0),
   });
   const profile = profileQuery.data ?? null;
   const profileId = profile?.id;
 
   // Posts are hidden while either side has a block, so don't fetch them.
-  const canLoadPosts = !!profileId && !isBlocked && !blockedMe;
+  // Blocks made by the other side are only known after a refresh of the block
+  // relations; nothing from this profile is shown before that check.
+  const [relationsChecked, setRelationsChecked] = useState(false);
+  const canLoadPosts = relationsChecked && !!profileId && !isBlocked && !blockedMe;
   const postsQuery = useQuery({
     queryKey: queryKeys.userPosts(profileId || ''),
     queryFn: () => getUserPosts(profileId as string),
@@ -198,7 +195,11 @@ export default function UserProfileScreen() {
 
   // Learn about blocks made by the other side as soon as the profile opens.
   useEffect(() => {
-    if (username) void refreshBlockRelations();
+    if (!username) return;
+    setRelationsChecked(false);
+    refreshBlockRelations().finally(() => {
+      if (mountedRef.current) setRelationsChecked(true);
+    });
   }, [username, refreshBlockRelations]);
 
   // Realtime follow count updates
@@ -234,12 +235,12 @@ export default function UserProfileScreen() {
     setRefreshing(true);
     try {
       void refreshBlockRelations();
-      await Promise.all([
+      await refreshWhileOnline(() => Promise.all([
         refetchProfile(),
         canLoadPosts ? refetchPosts() : null,
         canLoadPosts ? refetchReposts() : null,
         profileId && !blockedMe ? refetchCounts() : null,
-      ]);
+      ]));
     } finally {
       if (mountedRef.current) setRefreshing(false);
     }
@@ -412,8 +413,9 @@ export default function UserProfileScreen() {
   }
 
   // Loading state: only when no profile is cached yet (also while re-checking
-  // a cached "not found", which is never trusted without a fresh fetch).
-  if (!profile && (profileQuery.isPending || profileQuery.isFetching)) {
+  // a cached "not found", which is never trusted without a fresh fetch), and
+  // until the block relations have been refreshed for someone else's profile.
+  if ((!profile && (profileQuery.isPending || profileQuery.isFetching)) || (!relationsChecked && !isMyProfile)) {
     return (
       <SafeAreaView className="flex-1 bg-black">
         <Stack.Screen
