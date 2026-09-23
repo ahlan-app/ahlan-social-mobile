@@ -43,14 +43,8 @@ export default function TermsOfServiceScreen() {
           You must follow any policies made available to you within the Services. Do not misuse our Services. For example, do not interfere with our Services or try to access them using a method other than the interface and the instructions that we provide.
         </Text>
         <Text className="text-white text-lg font-bold mb-3 mt-6">Intellectual Property</Text>
-        <Text className="text-gray-400 text-base mb-3 leading-7">
+        <Text className="text-gray-400 text-base mb-6 leading-7">
           © 2026 Ahlan Social. All rights reserved.
-        </Text>
-        <Text className="text-gray-400 text-base mb-3 leading-7">
-          The source code is licensed under the Apache License, Version 2.0. You may use, reproduce, and distribute it in accordance with the license terms available at http://www.apache.org/licenses/LICENSE-2.0
-        </Text>
-        <Text className="text-gray-500 text-sm mb-6 leading-6">
-          Source code: github.com/sametyilmaztemel/ahlan-social-mobile
         </Text>
         <View className="pb-10" />
       </ScrollView>

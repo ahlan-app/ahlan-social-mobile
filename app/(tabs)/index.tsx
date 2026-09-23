@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -39,7 +39,6 @@ import { supabase } from '../../services/supabase.native';
 import PostCard from '../../components/native/PostCard';
 import PostSkeleton from '../../components/native/PostSkeleton';
 import StoryReel, { StoryGroup } from '../../components/native/StoryReel';
-import StoryCreator from '../../components/native/StoryCreator';
 import UserAvatar from '../../components/native/UserAvatar';
 import { VerifiedIcon, BellIcon, SendIcon } from '../../components/native/Icons';
 import type { Post, Story, SimpleUser } from '../../types';
@@ -329,28 +328,18 @@ export default function HomeFeedScreen() {
 
   const keyExtractor = useCallback((item: Post) => item.id, []);
 
-  const ListHeader = useCallback(() => {
-    return (
-      <View>
-        {/* Stories section — compact, Instagram-style (no title) */}
-        <View className="py-2 border-b border-gray-800">
-          <View className="flex-row px-2">
-            <StoryCreator
-              onAddStory={handleAddStory}
-              onViewStories={handleViewStories}
-            />
-            {storyGroups.length > 0 && (
-              <StoryReel
-                storyGroups={storyGroups}
-                allStories={allStories}
-                onViewStories={handleViewStories}
-              />
-            )}
-          </View>
-        </View>
-      </View>
-    );
-  }, [storyGroups, allStories, isLoading, handleAddStory, handleViewStories]);
+  // An element (not a component) so the story row keeps its scroll position
+  // when storyGroups changes.
+  const listHeader = useMemo(() => (
+    <View className="py-2 border-b border-gray-800">
+      <StoryReel
+        storyGroups={storyGroups}
+        allStories={allStories}
+        onViewStories={handleViewStories}
+        onAddStory={handleAddStory}
+      />
+    </View>
+  ), [storyGroups, allStories, handleAddStory, handleViewStories]);
 
   const ListEmpty = useCallback(() => {
     if (isLoading) return null;
@@ -490,7 +479,7 @@ export default function HomeFeedScreen() {
         data={posts}
         renderItem={renderPost}
         keyExtractor={keyExtractor}
-        ListHeaderComponent={ListHeader}
+        ListHeaderComponent={listHeader}
         ListEmptyComponent={ListEmpty}
         ListFooterComponent={ListFooter}
         refreshControl={

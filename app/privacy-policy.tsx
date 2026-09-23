@@ -43,14 +43,8 @@ export default function PrivacyPolicyScreen() {
           We collect information you provide directly to us, such as when you create or modify your account, request on-demand services, contact customer support, or otherwise communicate with us.
         </Text>
         <Text className="text-white text-lg font-bold mb-3 mt-6">Copyright Notice</Text>
-        <Text className="text-gray-400 text-base mb-3 leading-7">
+        <Text className="text-gray-400 text-base mb-6 leading-7">
           © 2026 Ahlan Social. All rights reserved.
-        </Text>
-        <Text className="text-gray-400 text-base mb-3 leading-7">
-          Licensed under the Apache License, Version 2.0. You may obtain a copy of the license at http://www.apache.org/licenses/LICENSE-2.0
-        </Text>
-        <Text className="text-gray-500 text-sm mb-6 leading-6">
-          Source code available at: github.com/sametyilmaztemel/ahlan-social-mobile
         </Text>
         <View className="pb-10" />
       </ScrollView>

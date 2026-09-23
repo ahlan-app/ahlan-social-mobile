@@ -13,10 +13,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import React from 'react';
-import { View, Text, Pressable, Image } from 'react-native';
+import React, { useCallback } from 'react';
+import { Image } from 'expo-image';
 import { useApp } from '../../store/AppContext.native';
+import StoryBubble, { STORY_INNER_SIZE } from './StoryBubble';
 import type { Story } from '../../types';
+
+// Square crop of the Ahlan emblem so it fills the inner circle like an avatar.
+const STORY_LOGO = require('../../assets/ahlan-logo-story.png');
 
 interface StoryCreatorProps {
   onAddStory: () => void;
@@ -24,52 +28,33 @@ interface StoryCreatorProps {
 }
 
 /**
- * "Your story" button — Ahlan logo inside a story ring, Instagram-style.
+ * "Your story" button — Ahlan logo inside the same ring as every other story.
  */
 const StoryCreator: React.FC<StoryCreatorProps> = ({ onAddStory, onViewStories }) => {
   const { userStories } = useApp();
   const hasAnyStory = userStories.length > 0;
 
-  const handlePress = () => {
+  const handlePress = useCallback(() => {
     if (hasAnyStory) {
       onViewStories(userStories, 0);
     } else {
       onAddStory();
     }
-  };
+  }, [hasAnyStory, userStories, onViewStories, onAddStory]);
 
   return (
-    <View className="items-center mr-3">
-      <Pressable
-        onPress={handlePress}
-        style={{
-          width: 56,
-          height: 56,
-          borderRadius: 28,
-          borderWidth: 2,
-          borderColor: hasAnyStory ? '#3b82f6' : '#4b5563',
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: '#000',
-          overflow: 'hidden',
-        }}
-        accessibilityLabel={hasAnyStory ? 'View your story' : 'Add to your story'}
-      >
-        <Image
-          source={require('../../assets/ahlan-logo.png')}
-          style={{
-            width: 56,
-            height: 56,
-            borderRadius: 28,
-            position: 'absolute',
-          }}
-          resizeMode="cover"
-        />
-      </Pressable>
-      <Text className="text-xs text-white w-14 text-center mt-1" numberOfLines={1}>
-        Your story
-      </Text>
-    </View>
+    <StoryBubble
+      label="Your story"
+      active={hasAnyStory}
+      onPress={handlePress}
+      accessibilityLabel={hasAnyStory ? 'View your story' : 'Add to your story'}
+    >
+      <Image
+        source={STORY_LOGO}
+        style={{ width: STORY_INNER_SIZE, height: STORY_INNER_SIZE }}
+        contentFit="cover"
+      />
+    </StoryBubble>
   );
 };
 

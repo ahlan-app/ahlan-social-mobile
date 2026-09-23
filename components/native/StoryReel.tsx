@@ -14,8 +14,10 @@
 // limitations under the License.
 
 import React from 'react';
-import { View, Text, Pressable, FlatList } from 'react-native';
+import { FlatList } from 'react-native';
 import UserAvatar from './UserAvatar';
+import StoryBubble, { STORY_INNER_SIZE, STORY_ROW_PADDING_H } from './StoryBubble';
+import StoryCreator from './StoryCreator';
 import { useApp } from '../../store/AppContext.native';
 import type { Story } from '../../types';
 
@@ -29,6 +31,7 @@ interface StoryReelProps {
   storyGroups: StoryGroup[];
   allStories: Story[];
   onViewStories: (stories: Story[], startIndex: number) => void;
+  onAddStory: () => void;
 }
 
 const StoryCircle: React.FC<{
@@ -36,35 +39,14 @@ const StoryCircle: React.FC<{
   avatar: string | null;
   onPress: () => void;
   isViewed: boolean;
-}> = React.memo(({ username, avatar, onPress, isViewed }) => {
+}> = React.memo(({ username, avatar, onPress, isViewed }) => (
   // Viewed stories get the blue ring; unwatched stay gray
-  const borderColor = isViewed ? '#3b82f6' : '#4b5563';
+  <StoryBubble label={`@${username}`} active={isViewed} onPress={onPress}>
+    <UserAvatar username={username} avatarUrl={avatar} size={STORY_INNER_SIZE} />
+  </StoryBubble>
+));
 
-  return (
-    <View className="items-center mr-3">
-      <Pressable
-        onPress={onPress}
-        style={{
-          width: 56,
-          height: 56,
-          borderRadius: 28,
-          borderWidth: 2,
-          borderColor,
-          padding: 2,
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <UserAvatar username={username} avatarUrl={avatar} size={48} />
-      </Pressable>
-      <Text className="text-xs text-white w-14 text-center mt-1" numberOfLines={1}>
-        @{username}
-      </Text>
-    </View>
-  );
-});
-
-const StoryReel: React.FC<StoryReelProps> = ({ storyGroups, allStories, onViewStories }) => {
+const StoryReel: React.FC<StoryReelProps> = ({ storyGroups, allStories, onViewStories, onAddStory }) => {
   const { isStoryViewed } = useApp();
 
   const handleViewUserStories = (userStories: Story[]) => {
@@ -104,7 +86,9 @@ const StoryReel: React.FC<StoryReelProps> = ({ storyGroups, allStories, onViewSt
       keyExtractor={item => item.username}
       horizontal
       showsHorizontalScrollIndicator={false}
-      contentContainerStyle={{ paddingHorizontal: 4 }}
+      // "Your story" is the first bubble of the same scrolling row
+      ListHeaderComponent={<StoryCreator onAddStory={onAddStory} onViewStories={onViewStories} />}
+      contentContainerStyle={{ paddingHorizontal: STORY_ROW_PADDING_H, alignItems: 'flex-start' }}
     />
   );
 };
