@@ -786,6 +786,39 @@ export const getMorePosts = async (): Promise<Post[]> => {
     }
 };
 
+export interface FeedPage {
+    posts: Post[];
+    /** created_at of the last post, used to request the next page; null = no more pages. */
+    nextCursor: string | null;
+}
+
+/**
+ * One page of the home timeline (followed users + me), newest first.
+ * Stateless cursor pagination for TanStack useInfiniteQuery. Throws on error
+ * so cached pages stay on screen instead of being replaced by an empty list.
+ */
+export const getTimelinePage = async (cursor: string | null): Promise<FeedPage> => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { posts: [], nextCursor: null };
+
+    const userIdsToFetch = await getFeedUserIds(user.id);
+    let query = supabase
+        .from('posts')
+        .select(POST_SELECT_QUERY)
+        .in('user_id', userIdsToFetch)
+        .order('created_at', { ascending: false })
+        .limit(FEED_PAGE_SIZE);
+    if (cursor) query = query.lt('created_at', cursor);
+
+    const { data: postsData, error } = await query;
+    if (error) throw error;
+    const rows = postsData || [];
+    return {
+        posts: rows.map(mapPostData),
+        nextCursor: rows.length >= FEED_PAGE_SIZE ? (rows[rows.length - 1]?.created_at ?? null) : null,
+    };
+};
+
 export const resetPageCounter = () => {
     currentFeedCursor = null;
 };

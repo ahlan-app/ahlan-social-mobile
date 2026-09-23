@@ -27,7 +27,15 @@ import { Anton_400Regular } from '@expo-google-fonts/anton';
 import { Fredoka_500Medium } from '@expo-google-fonts/fredoka';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { AppProvider, useApp } from '../store/AppContext.native';
+import {
+  queryClient,
+  queryPersister,
+  QUERY_CACHE_MAX_AGE,
+  shouldPersistQuery,
+} from '../services/queryClient';
 import { supabase } from '../services/supabase.native';
 import {
   registerForPushNotifications,
@@ -169,15 +177,26 @@ function RootLayoutNav() {
   );
 }
 
+// Persisted TanStack Query cache: screens render the last known data
+// instantly on launch; a new app version starts with an empty cache.
+const persistOptions = {
+  persister: queryPersister,
+  maxAge: QUERY_CACHE_MAX_AGE,
+  buster: Constants.expoConfig?.version ?? 'dev',
+  dehydrateOptions: { shouldDehydrateQuery: shouldPersistQuery },
+};
+
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <AppProvider>
-          <StatusBar style="light" />
-          <RootLayoutNav />
-          <ToastContainer />
-        </AppProvider>
+        <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
+          <AppProvider>
+            <StatusBar style="light" />
+            <RootLayoutNav />
+            <ToastContainer />
+          </AppProvider>
+        </PersistQueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

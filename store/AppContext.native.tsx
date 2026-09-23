@@ -28,6 +28,12 @@ import {
     withLegacyUsernames,
 } from '../services/blockRelations';
 import { supabase } from '../services/supabase.native';
+import {
+    clearQueryCache,
+    invalidateAfterBlockChange,
+    invalidateAfterFollowChange,
+    invalidateAfterPostChange,
+} from '../services/queryClient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import type { Comment, Post, Story, UserProfile, Toast, Notification, Message } from '../types';
@@ -461,6 +467,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             if (session?.user && (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'USER_UPDATED')) {
                 await syncUserData(session.user);
             } else if (event === 'SIGNED_OUT') {
+                // Cached feeds, profiles and lists belong to the old account.
+                void clearQueryCache();
                 setState(prevState => ({
                     ...prevState,
                     likedPosts: new Set(),
@@ -745,12 +753,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             if (!realPost) {
                 throw new Error("API returned null post.");
             }
+            void invalidateAfterPostChange(state.userProfile.id);
         } catch (error) {
             console.error("Failed to publish post.", error);
             addToast('Failed to create post.', 'error');
             throw error;
         }
-    }, [addToast]);
+    }, [addToast, state.userProfile.id]);
 
     const deleteProfilePost = useCallback((postId: string) => {
         // Optimistic update
@@ -761,15 +770,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }));
 
         // If admin is deleting, call admin delete function
-        if (state.isAdmin) {
-            adminDeletePost(postId).catch(err => {
-                 console.error("Failed to delete post as admin", err);
-                 addToast("Could not delete post.", "error");
-            });
-        } else {
-            deletePost(postId);
-        }
-    }, [state.isAdmin, addToast]);
+        const request = state.isAdmin
+            ? adminDeletePost(postId).catch(err => {
+                console.error("Failed to delete post as admin", err);
+                addToast("Could not delete post.", "error");
+            })
+            : Promise.resolve(deletePost(postId));
+        request.finally(() => { void invalidateAfterPostChange(state.userProfile.id); });
+    }, [state.isAdmin, state.userProfile.id, addToast]);
 
      const updateProfilePost = useCallback((updatedPost: Post) => {
         // Optimistic update
@@ -778,8 +786,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             ...prevState,
             profilePosts: prevState.profilePosts.map(p => p.id === updatedPost.id ? updatedPost : p),
         }));
-        updatePost(updatedPost);
-    }, []);
+        Promise.resolve(updatePost(updatedPost)).finally(() => { void invalidateAfterPostChange(state.userProfile.id); });
+    }, [state.userProfile.id]);
 
     const setProfilePosts = useCallback((posts: Post[]) => {
         // FIX: Explicitly type prevState as AppState.
@@ -1009,6 +1017,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             }
             invalidateProfileCache(username);
             await refreshBlockRelations(myId);
+            void invalidateAfterBlockChange();
             // The server removed follows in both directions.
             const usernames = await getFollowingList(myId);
             setState(prev => ({ ...prev, followedUsernames: new Set(usernames.map(u => u.toLowerCase())) }));
@@ -1083,6 +1092,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             } else {
                 await followUser(user.id, targetUserId);
             }
+            void invalidateAfterFollowChange(targetUserId);
             // Re-sync with database after action to ensure consistency.
             const usernames = await getFollowingList(user.id);
             setState(prev => ({
