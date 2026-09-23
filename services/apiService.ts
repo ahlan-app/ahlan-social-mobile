@@ -18,6 +18,8 @@ import type { Message, Post, Notification, Comment, Story, UserProfile, SimpleUs
 import type { User } from '@supabase/supabase-js';
 // Import supabase client from the native adapter (uses SecureStore for session persistence)
 import { supabase } from './supabase.native';
+import { prepareImageForUpload, readFileAsArrayBuffer } from './imageCompression';
+import type { BlockRelationRow } from './blockRelations';
 // Re-export so other files can import from apiService
 export { supabase };
 
@@ -290,66 +292,49 @@ async function localUrlToBlob(url: string): Promise<Blob> {
  * Returns the public URL of the uploaded file.
  */
 export async function uploadMedia(localUri: string, userId: string): Promise<string> {
-    // Fetch the local file as an ArrayBuffer — this works on RN for file:// and content:// URIs
-    const response = await fetch(localUri);
-    if (!response.ok) {
-        throw new Error(`Failed to read local file: ${response.status} ${response.statusText}`);
-    }
-    const arrayBuffer = await response.arrayBuffer();
+    // Still images are resized to max 1080px wide and re-encoded as 70% WebP first.
+    return withPreparedImage(localUri, async (arrayBuffer, contentType, ext) => {
+        const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
 
-    // Determine content type from URI extension
-    const uriLower = localUri.toLowerCase();
-    let contentType = 'image/jpeg'; // default
-    let ext = 'jpg';
-    if (uriLower.endsWith('.png')) { contentType = 'image/png'; ext = 'png'; }
-    else if (uriLower.endsWith('.webp')) { contentType = 'image/webp'; ext = 'webp'; }
-    else if (uriLower.endsWith('.gif')) { contentType = 'image/gif'; ext = 'gif'; }
-    else if (uriLower.endsWith('.mp4')) { contentType = 'video/mp4'; ext = 'mp4'; }
-    else if (uriLower.endsWith('.mov')) { contentType = 'video/quicktime'; ext = 'mov'; }
+        // Try uploading to the 'post-media' bucket first (same bucket the web app uses)
+        const candidatePaths = [
+            `${userId}/posts/${fileName}`,
+            `posts/${userId}/${fileName}`,
+            `public/${userId}/${fileName}`,
+        ];
 
-    const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+        const bucketCandidates = ['post-media', 'media', 'uploads'];
 
-    // Try uploading to the 'post-media' bucket first (same bucket the web app uses)
-    const candidatePaths = [
-        `${userId}/posts/${fileName}`,
-        `posts/${userId}/${fileName}`,
-        `public/${userId}/${fileName}`,
-    ];
+        for (const bucket of bucketCandidates) {
+            for (const filePath of candidatePaths) {
+                const { error } = await supabase.storage
+                    .from(bucket)
+                    .upload(filePath, arrayBuffer, {
+                        cacheControl: '3600',
+                        upsert: false,
+                        contentType,
+                    });
 
-    const bucketCandidates = ['post-media', 'media', 'uploads'];
+                if (!error) {
+                    const { data } = supabase.storage.from(bucket).getPublicUrl(filePath);
+                    return data.publicUrl;
+                }
 
-    let lastError: unknown = null;
-
-    for (const bucket of bucketCandidates) {
-        for (const filePath of candidatePaths) {
-            const { error } = await supabase.storage
-                .from(bucket)
-                .upload(filePath, arrayBuffer, {
-                    cacheControl: '3600',
-                    upsert: false,
-                    contentType,
-                });
-
-            if (!error) {
-                const { data } = supabase.storage.from(bucket).getPublicUrl(filePath);
-                return data.publicUrl;
-            }
-
-            lastError = error;
-            // If it's not a policy/bucket error, throw immediately
-            if (!isLikelyStoragePolicyError(error) && !isStorageBucketMissingError(error)) {
-                throw error;
-            }
-            // If it's a bucket-missing error for this bucket, try next bucket
-            if (isStorageBucketMissingError(error)) {
-                break; // skip remaining paths for this bucket, try next bucket
+                // If it's not a policy/bucket error, throw immediately
+                if (!isLikelyStoragePolicyError(error) && !isStorageBucketMissingError(error)) {
+                    throw error;
+                }
+                // If it's a bucket-missing error for this bucket, try next bucket
+                if (isStorageBucketMissingError(error)) {
+                    break; // skip remaining paths for this bucket, try next bucket
+                }
             }
         }
-    }
 
-    // All buckets failed — fall back to data URL
-    console.warn('All storage buckets unavailable, falling back to data URL.');
-    return arrayBufferToDataUrl(arrayBuffer, contentType);
+        // All buckets failed — fall back to data URL
+        console.warn('All storage buckets unavailable, falling back to data URL.');
+        return arrayBufferToDataUrl(arrayBuffer, contentType);
+    });
 }
 
 /**
@@ -395,6 +380,33 @@ const isStorageBucketMissingError = (error: unknown): boolean => {
     return message.includes('bucket') && message.includes('not found');
 };
 
+const isMimeTypeRejected = (error: unknown): boolean => {
+    const e = error as { message?: unknown; statusCode?: unknown; error?: unknown } | null;
+    return String(e?.statusCode) === '415'
+        || e?.error === 'invalid_mime_type'
+        || String(e?.message || '').toLowerCase().includes('mime type');
+};
+
+/**
+ * Compresses a local image (max 1080px wide, 70% WebP) and hands the bytes to
+ * `send`. If a storage bucket still rejects WebP (migration not applied yet),
+ * retries once as JPEG.
+ */
+async function withPreparedImage<T>(
+    uri: string,
+    send: (body: ArrayBuffer, contentType: string, extension: string) => Promise<T>,
+): Promise<T> {
+    const prepared = await prepareImageForUpload(uri);
+    try {
+        return await send(await readFileAsArrayBuffer(prepared.uri), prepared.mimeType, prepared.extension);
+    } catch (error) {
+        if (prepared.mimeType !== 'image/webp' || !isMimeTypeRejected(error)) throw error;
+        console.warn('Storage rejected WebP; retrying as JPEG. Apply the 20260923 storage migration.');
+        const jpeg = await prepareImageForUpload(uri, undefined, { format: 'jpeg' });
+        return send(await readFileAsArrayBuffer(jpeg.uri), jpeg.mimeType, jpeg.extension);
+    }
+}
+
 const uploadToPostMediaBucket = async (
     file: Blob | File,
     userId: string,
@@ -434,11 +446,13 @@ const uploadToPostMediaBucket = async (
 };
 
 const uploadStoryMedia = async (
-    file: Blob | File,
+    file: Blob | File | ArrayBuffer,
     userId: string,
+    contentTypeOverride?: string,
 ): Promise<{ bucket: string; filePath: string }> => {
     const fallbackExtension = 'jpg';
-    const extension = toStorageExtension(file.type, fallbackExtension);
+    const fileType = contentTypeOverride || (file instanceof ArrayBuffer ? undefined : file.type) || undefined;
+    const extension = toStorageExtension(fileType, fallbackExtension);
     const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${extension}`;
     const bucketCandidates = ['post-media', 'avatars', 'stories', 'story-media'];
     const filePathCandidates = [
@@ -458,7 +472,7 @@ const uploadStoryMedia = async (
                 .upload(filePath, file, {
                     cacheControl: '3600',
                     upsert: false,
-                    contentType: file.type || undefined,
+                    contentType: fileType,
                 });
 
             if (!error) {
@@ -579,28 +593,37 @@ export const deletePost = async (postId: string): Promise<boolean> => {
 };
 
 // --- ADMIN FUNCTIONS ---
-export const setUserVerified = async (userId: string, username: string, status: boolean): Promise<void> => {
-    // We update by ID to be absolutely sure we target the correct row,
-    // preventing issues with case sensitivity or duplicate usernames (if any).
-    // We also select the data back to confirm the update happened.
-    const { data, error } = await supabase
-        .from("profiles")
-        .update({ is_verified: status })
-        .eq("id", userId)
-        .select();
+/**
+ * Grants or revokes the blue badge. Authority is checked server-side by the
+ * admin_set_verified RPC (profiles.is_admin of the caller); a direct UPDATE on
+ * another user's profile row is blocked by row-level security. Resolves with
+ * the value actually stored.
+ */
+export const setUserVerified = async (userId: string, username: string, status: boolean): Promise<boolean> => {
+    const { data, error } = await supabase.rpc('admin_set_verified', {
+        target_user_id: userId,
+        verified: status,
+    });
 
-    if (error) throw error;
-    
-    // If data is empty, it means no row was updated (likely RLS blocked it or ID not found).
-    if (!data || data.length === 0) {
-        throw new Error("Update failed: No rows modified. Check permissions.");
+    if (error) {
+        console.error('admin_set_verified failed:', error.code, error.message);
+        if (error.code === '42501') throw new Error('Only admins can change verification.');
+        if (error.code === 'PGRST202') throw new Error('Verification service is not set up on the server yet.');
+        throw new Error(error.message || 'Could not update verification.');
     }
 
-    // Update local cache to prevent UI reversion
-    if (profileCache.has(username)) {
-        const cached = profileCache.get(username)!;
-        profileCache.set(username, { ...cached, isVerified: status });
+    const stored = data === true;
+    if (stored !== status) {
+        throw new Error('Verification status was not applied.');
     }
+
+    // Keep the profile cache in sync so the badge does not flip back.
+    profileCache.forEach((cached, key) => {
+        if (cached.id === userId || key === username) {
+            profileCache.set(key, { ...cached, isVerified: stored });
+        }
+    });
+    return stored;
 };
 
 export const adminDeletePost = async (postId: string): Promise<void> => {
@@ -1150,7 +1173,11 @@ export const getStoryById = async (storyId: string): Promise<Story | null> => {
     return null;
 };
 
-export const uploadStory = async (file: File | Blob | null, caption: string | null, userId: string): Promise<Story | null> => {
+/**
+ * Creates a story. `file` is either a local image URI (compressed to max
+ * 1080px wide, 70% WebP before upload), a Blob/File, or null for text stories.
+ */
+export const uploadStory = async (file: File | Blob | string | null, caption: string | null, userId: string): Promise<Story | null> => {
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
         throw new Error('User not authenticated');
@@ -1170,8 +1197,16 @@ export const uploadStory = async (file: File | Blob | null, caption: string | nu
 
     let mediaUrl: string | null = null;
     if (file) {
+        let body: Blob | File | ArrayBuffer = file as Blob | File;
+        let contentType: string | undefined;
         try {
-            const { bucket, filePath } = await uploadStoryMedia(file, user.id);
+            const { bucket, filePath } = typeof file === 'string'
+                ? await withPreparedImage(file, (bytes, type) => {
+                    body = bytes;
+                    contentType = type;
+                    return uploadStoryMedia(bytes, user.id, type);
+                })
+                : await uploadStoryMedia(body, user.id, contentType);
             const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(filePath);
             if (!urlData) throw new Error("Could not get public URL for story.");
             mediaUrl = urlData.publicUrl;
@@ -1179,7 +1214,9 @@ export const uploadStory = async (file: File | Blob | null, caption: string | nu
             if (isLikelyStoragePolicyError(uploadError) || isStorageBucketMissingError(uploadError)) {
                 console.warn('Story media upload skipped due storage policy/bucket constraints.', uploadError);
                 try {
-                    mediaUrl = await blobToDataUrl(file);
+                    mediaUrl = body instanceof ArrayBuffer
+                        ? arrayBufferToDataUrl(body, contentType || 'image/jpeg')
+                        : await blobToDataUrl(body);
                 } catch (dataUrlError) {
                     console.warn('Could not convert story media to inline data URL.', dataUrlError);
                     mediaUrl = buildTextStoryDataUri(caption || 'Story');
@@ -1304,8 +1341,8 @@ export const replyToStory = async (storyId: string, storyOwnerId: string, text: 
 
 // FIX: Replaced undefined 'UserProfileType' with 'UserProfile'.
 const profileCache = new Map<string, UserProfile>();
-export const getUserProfile = async (username: string): Promise<UserProfile | null> => {
-    if (profileCache.has(username)) {
+export const getUserProfile = async (username: string, opts: { force?: boolean } = {}): Promise<UserProfile | null> => {
+    if (!opts.force && profileCache.has(username)) {
         return profileCache.get(username)!;
     }
     const { data, error } = await supabase.from('profiles').select('*').eq('username', username).single();
@@ -1419,23 +1456,102 @@ export const getSavedPosts = async (userId: string): Promise<Post[]> => {
 export const updateUserProfileData = async (updates: Partial<Pick<UserProfile, 'name' | 'username' | 'bio'>>): Promise<boolean> => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return false;
-    const { error } = await supabase.from('profiles').update(updates).eq('id', user.id);
-    return !error;
+    // The profiles column is full_name; the app model calls it name.
+    const row: Record<string, string> = {};
+    if (updates.name !== undefined) row.full_name = updates.name;
+    if (updates.username !== undefined) row.username = updates.username;
+    if (updates.bio !== undefined) row.bio = updates.bio;
+    if (Object.keys(row).length === 0) return true;
+    const { error } = await supabase.from('profiles').update(row).eq('id', user.id);
+    if (error) {
+        console.error('Profile update error:', error.message || error);
+        return false;
+    }
+    // syncUserData prefers auth metadata for name/username, so keep it in step.
+    const metadata: Record<string, string> = {};
+    if (row.full_name !== undefined) metadata.full_name = row.full_name;
+    if (row.username !== undefined) metadata.username = row.username;
+    if (Object.keys(metadata).length > 0) {
+        const { error: metadataError } = await supabase.auth.updateUser({ data: metadata });
+        if (metadataError) console.warn('Auth metadata update failed:', metadataError.message);
+    }
+    profileCache.clear();
+    return true;
 };
 
-export const uploadAvatar = async (file: File | Blob): Promise<string | null> => {
+/**
+ * Uploads a new profile photo and saves it as the user's avatar_url. `file`
+ * may be a local image URI (compressed to max 1080px wide, 70% WebP first).
+ */
+export const uploadAvatar = async (file: File | Blob | string): Promise<string | null> => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return null;
 
-    const filePath = `avatars/${user.id}/${Date.now()}`;
-    const { error } = await supabase.storage.from('avatars').upload(filePath, file, { upsert: true });
-    if (error) {
+    const send = async (body: File | Blob | ArrayBuffer, contentType: string | undefined): Promise<string> => {
+        const extension = toStorageExtension(contentType, 'jpg');
+        const filePath = `avatars/${user.id}/${Date.now()}.${extension}`;
+        const { error } = await supabase.storage.from('avatars').upload(filePath, body, { upsert: true, contentType });
+        if (error) throw error;
+        return supabase.storage.from('avatars').getPublicUrl(filePath).data.publicUrl;
+    };
+
+    let publicUrl: string;
+    try {
+        publicUrl = typeof file === 'string'
+            ? await withPreparedImage(file, (bytes, type) => send(bytes, type))
+            : await send(file, file.type || undefined);
+    } catch (error) {
         console.error('Avatar upload error:', error);
         return null;
     }
 
-    const { data } = supabase.storage.from('avatars').getPublicUrl(filePath);
-    return data.publicUrl;
+    const { error: profileError } = await supabase
+        .from('profiles')
+        .update({ avatar_url: publicUrl })
+        .eq('id', user.id);
+    if (profileError) {
+        console.error('Avatar profile update error:', profileError);
+        return null;
+    }
+    profileCache.clear();
+    return publicUrl;
+};
+
+// =========================================================
+// Blocks (two-way: see supabase/migrations/20260923_user_blocks.sql)
+// =========================================================
+
+/** Block relations in both directions, or null when the server call failed. */
+export const getBlockRelations = async (): Promise<BlockRelationRow[] | null> => {
+    const { data, error } = await supabase.rpc('get_block_relations');
+    if (error) {
+        console.warn('get_block_relations failed:', error.message || error);
+        return null;
+    }
+    return Array.isArray(data) ? (data as BlockRelationRow[]) : [];
+};
+
+/** Blocks a user and removes follows in both directions (server-side). */
+export const blockUserById = async (targetId: string): Promise<void> => {
+    const { error } = await supabase.rpc('block_user', { p_target: targetId });
+    if (error) throw error;
+};
+
+export const unblockUserById = async (targetId: string): Promise<void> => {
+    const { error } = await supabase.rpc('unblock_user', { p_target: targetId });
+    if (error) throw error;
+};
+
+/** Drops cached profiles so a block/unblock is reflected on the next load. */
+export const invalidateProfileCache = (username?: string | null): void => {
+    if (!username) {
+        profileCache.clear();
+        return;
+    }
+    const key = username.trim().toLowerCase();
+    for (const cachedKey of Array.from(profileCache.keys())) {
+        if (cachedKey.trim().toLowerCase() === key) profileCache.delete(cachedKey);
+    }
 };
 
 // =========================================================
@@ -1624,27 +1740,46 @@ export async function addComment(postId: string, userId: string, content: string
   return data;
 }
 
+/**
+ * Deletes a comment. Allowed for the comment's author and for the owner of
+ * the post it belongs to (enforced by the comments DELETE RLS policy).
+ * Throws when nothing was deleted so optimistic UI can roll back.
+ */
 export const deleteComment = async (commentId: string): Promise<void> => {
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
         throw new Error('User not authenticated');
     }
 
-    const { error } = await supabase
+    const { data, error } = await supabase
         .from('comments')
         .delete()
         .eq('id', commentId)
-        .eq('user_id', user.id);
+        .select('id');
 
     if (error) {
         throw error;
     }
+    if (!data || data.length === 0) {
+        throw new Error('You can only delete your own comments or comments on your posts.');
+    }
+};
+
+/** Returns the author id of a post, or null if it cannot be read. */
+export const getPostOwnerId = async (postId: string): Promise<string | null> => {
+    const { data, error } = await supabase
+        .from('posts')
+        .select('user_id')
+        .eq('id', postId)
+        .maybeSingle();
+    if (error || !data) return null;
+    return (data as { user_id: string }).user_id ?? null;
 };
 
 export const getCommentsForPost = async (postId: string): Promise<Comment[]> => {
     const { data, error } = await supabase
         .from('comments')
-        .select('*, profiles!user_id(username, avatar_url)')
+        .select('*, profiles!user_id(username, avatar_url, is_verified)')
         .eq('post_id', postId)
         .order('created_at', { ascending: false });
 
@@ -1652,8 +1787,9 @@ export const getCommentsForPost = async (postId: string): Promise<Comment[]> => 
     return (data || []).map((c: any) => ({
         id: c.id,
         userId: c.user_id,
-        username: c.profiles.username,
-        avatar: c.profiles.avatar_url,
+        username: c.profiles?.username ?? 'unknown',
+        avatar: c.profiles?.avatar_url ?? null,
+        isVerified: Boolean(c.profiles?.is_verified),
         text: c.content,
         timestamp: new Date(c.created_at),
         likes: 0, // Simplified for now

@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -120,7 +120,7 @@ const SharedUserPreview: React.FC<{ user: SimpleUser; onPress: () => void }> = (
 export default function MessagesScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ chatWith?: string }>();
-  const { userProfile, addToast, markAllMessagesAsRead, markChatAsRead, unreadChats, triggerHapticFeedback } = useApp();
+  const { userProfile, addToast, markAllMessagesAsRead, markChatAsRead, unreadChats, triggerHapticFeedback, isUserBlocked, isUserIdBlocked } = useApp();
 
   const [chatUsers, setChatUsers] = useState<SimpleUser[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(true);
@@ -138,6 +138,17 @@ export default function MessagesScreen() {
   const [userToDelete, setUserToDelete] = useState<SimpleUser | null>(null);
 
   const inputRef = useRef<TextInput>(null);
+
+  // Accounts with a block in either direction are hidden from chats and search.
+  const visibleChatUsers = useMemo(
+    () => chatUsers.filter(u => !isUserIdBlocked(u.id) && !isUserBlocked(u.username)),
+    [chatUsers, isUserIdBlocked, isUserBlocked],
+  );
+  const visibleSearchResults = useMemo(
+    () => userSearchResults.filter(u => !isUserIdBlocked(u.id) && !isUserBlocked(u.username)),
+    [userSearchResults, isUserIdBlocked, isUserBlocked],
+  );
+  const chatBlocked = chatWith ? (isUserIdBlocked(chatWith.id) || isUserBlocked(chatWith.username)) : false;
 
   // Mark messages read on mount (list view)
   useEffect(() => {
@@ -168,7 +179,9 @@ export default function MessagesScreen() {
     if (!params.chatWith) return;
     const findAndOpen = async () => {
       const profile = await getUserProfile(params.chatWith!);
-      if (profile) {
+      if (profile && (isUserIdBlocked(profile.id) || isUserBlocked(profile.username))) {
+        addToast("This account isn't available.", 'error');
+      } else if (profile) {
         const userToChat: SimpleUser = {
           id: profile.id,
           username: profile.username,
@@ -332,7 +345,7 @@ export default function MessagesScreen() {
   };
 
   const handleSendMessage = async () => {
-    if (!newMessage.trim() || !chatWith || !userProfile?.id) return;
+    if (!newMessage.trim() || !chatWith || !userProfile?.id || chatBlocked) return;
 
     const tempId = `temp-message-${Date.now()}`;
     const textToSend = cleanHtml(newMessage.trim());
@@ -503,6 +516,11 @@ export default function MessagesScreen() {
           )}
 
           {/* Input */}
+          {chatBlocked ? (
+            <View className="border-t border-gray-800 bg-black px-3 py-3">
+              <Text className="text-gray-500 text-center">You can't message this account.</Text>
+            </View>
+          ) : (
           <View className="border-t border-gray-800 bg-black px-3 py-2">
             <View className="flex-row items-center" style={{ gap: 8 }}>
               <TextInput
@@ -525,6 +543,7 @@ export default function MessagesScreen() {
               </Pressable>
             </View>
           </View>
+          )}
         </KeyboardAvoidingView>
       </SafeAreaView>
     );
@@ -609,9 +628,9 @@ export default function MessagesScreen() {
           <View className="flex-1 justify-center items-center">
             <ActivityIndicator color="#3b82f6" />
           </View>
-        ) : userSearchResults.length > 0 ? (
+        ) : visibleSearchResults.length > 0 ? (
           <FlatList
-            data={userSearchResults}
+            data={visibleSearchResults}
             keyExtractor={item => item.id}
             renderItem={renderSearchResult}
           />
@@ -624,9 +643,9 @@ export default function MessagesScreen() {
         <View className="flex-1 justify-center items-center">
           <ActivityIndicator color="#3b82f6" size="large" />
         </View>
-      ) : chatUsers.length > 0 ? (
+      ) : visibleChatUsers.length > 0 ? (
         <FlatList
-          data={chatUsers}
+          data={visibleChatUsers}
           keyExtractor={item => item.id}
           renderItem={renderChatUser}
         />

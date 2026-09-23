@@ -254,6 +254,7 @@ export default function SearchScreen() {
       }
       return (
         <FlatList
+          key="user-results"
           data={userResults}
           keyExtractor={item => item.username}
           renderItem={({ item }) => (
@@ -273,6 +274,7 @@ export default function SearchScreen() {
       }
       return (
         <FlatList
+          key="post-results"
           data={filteredPosts}
           keyExtractor={item => item.id}
           renderItem={({ item }) => (
@@ -298,6 +300,7 @@ export default function SearchScreen() {
     }
     return (
       <FlatList
+        key="hashtag-results"
         data={filteredHashtags}
         keyExtractor={item => item.tag}
         renderItem={({ item }) => <HashtagResult hashtag={item} />}
@@ -376,6 +379,7 @@ export default function SearchScreen() {
         </View>
       ) : (
         <FlatList
+          key="explore-grid"
           data={visibleExplorePosts}
           renderItem={renderExploreItem}
           keyExtractor={item => item.id}

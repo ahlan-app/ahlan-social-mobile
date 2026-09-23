@@ -13,9 +13,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import React, { createContext, useContext, useState, ReactNode, useCallback, useMemo, useEffect } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useCallback, useMemo, useEffect, useRef } from 'react';
+import { AppState as RNAppState } from 'react-native';
 import type { User } from '@supabase/supabase-js';
-import { publishPost, deletePost, updatePost, toggleLike as apiToggleLike, toggleRepost as apiToggleRepost, addComment as apiAddComment, getFollowingList, unfollowUser, followUser, markNotificationsAsRead, getMyStories, deleteStoryFromDatabase, toggleStoryLikeInDatabase, markMessagesAsRead as apiMarkMessagesAsRead, toggleSavePost as apiToggleSavePost, adminDeletePost, ensureCurrentUserProfile, uploadMedia } from '../services/apiService';
+import { publishPost, deletePost, updatePost, toggleLike as apiToggleLike, toggleRepost as apiToggleRepost, addComment as apiAddComment, getFollowingList, unfollowUser, followUser, markNotificationsAsRead, getMyStories, deleteStoryFromDatabase, toggleStoryLikeInDatabase, markMessagesAsRead as apiMarkMessagesAsRead, toggleSavePost as apiToggleSavePost, adminDeletePost, ensureCurrentUserProfile, uploadMedia, getBlockRelations, blockUserById, unblockUserById, invalidateProfileCache } from '../services/apiService';
+import {
+    type BlockSets,
+    buildBlockSets,
+    emptyBlockSets,
+    isHiddenUserId,
+    isHiddenUsername,
+    normalizeUsername,
+    sameBlockSets,
+    withLegacyUsernames,
+} from '../services/blockRelations';
 import { supabase } from '../services/supabase.native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
@@ -36,7 +47,8 @@ interface AppState {
     hasNewStory: boolean;
     viewedStoryTimestamps: Set<string>;
     isViewingStory: boolean;
-    blockedUsers: Set<string>;
+    /** Two-way block sets (server-backed). */
+    blocks: BlockSets;
     likedVideoIds: Set<string>;
     followedUsernames: Set<string>;
     votedPolls: Map<string, number>;
@@ -77,8 +89,17 @@ interface AppContextType extends AppState {
     markStoryAsViewed: (timestamp: string) => void;
     isStoryViewed: (timestamp: string) => boolean;
     setIsViewingStory: (isViewing: boolean) => void;
-    toggleBlockUser: (username: string) => void;
-    isUserBlocked: (username: string) => boolean;
+    /** Lower-case usernames I blocked (compat). */
+    blockedUsers: Set<string>;
+    toggleBlockUser: (username: string, userId?: string) => Promise<boolean>;
+    /** True when there is a block in EITHER direction (used by every content filter). */
+    isUserBlocked: (username?: string | null) => boolean;
+    isUserIdBlocked: (userId?: string | null) => boolean;
+    /** I blocked this user (drives the Unblock button). */
+    isBlockedByMe: (username?: string | null) => boolean;
+    /** This user blocked me (profile shows "account isn't available"). */
+    hasBlockedMe: (username?: string | null) => boolean;
+    refreshBlockRelations: () => Promise<void>;
     toggleVideoLike: (videoId: string) => void;
     isVideoLiked: (videoId: string) => boolean;
     toggleFollowUser: (username: string) => Promise<void>;
@@ -99,7 +120,10 @@ interface AppContextType extends AppState {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-const BLOCKED_USERS_KEY = 'ahlan-blocked-users';
+// Pre-1.0.9 blocks were usernames stored only on this device; they are
+// migrated to the server once and then removed.
+const LEGACY_BLOCKED_USERS_KEY = 'ahlan-blocked-users';
+const blockCacheKey = (userId: string) => `ahlan-block-relations-v2:${userId}`;
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [state, setState] = useState<AppState>(() => {
@@ -123,7 +147,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             hasNewStory: false,
             viewedStoryTimestamps: new Set(),
             isViewingStory: false,
-            blockedUsers: new Set(),
+            blocks: emptyBlockSets(),
             likedVideoIds: new Set(),
             followedUsernames: new Set(),
             votedPolls: new Map(),
@@ -137,27 +161,59 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         };
     });
 
-    // Load blocked users from AsyncStorage after mount
+    const legacyBlockedRef = useRef<string[]>([]);
+    const userIdRef = useRef('');
+    userIdRef.current = state.userProfile.id;
+
+    // Load pre-1.0.9 device-only blocks so they keep filtering until migrated.
     useEffect(() => {
-        const loadBlockedUsers = async () => {
+        const loadLegacyBlocks = async () => {
             try {
-                const savedBlockedUsers = await AsyncStorage.getItem(BLOCKED_USERS_KEY);
-                if (savedBlockedUsers) {
-                    const parsed = JSON.parse(savedBlockedUsers);
-                    if (Array.isArray(parsed)) {
-                        const validBlockedUsers = parsed.filter(item => typeof item === 'string');
-                        setState(prevState => ({
-                            ...prevState,
-                            blockedUsers: new Set(validBlockedUsers),
-                        }));
-                    }
+                const raw = await AsyncStorage.getItem(LEGACY_BLOCKED_USERS_KEY);
+                const parsed = raw ? JSON.parse(raw) : [];
+                legacyBlockedRef.current = Array.isArray(parsed)
+                    ? parsed.filter((item: unknown): item is string => typeof item === 'string')
+                    : [];
+                if (legacyBlockedRef.current.length > 0) {
+                    setState(prevState => ({
+                        ...prevState,
+                        blocks: withLegacyUsernames(prevState.blocks, legacyBlockedRef.current),
+                    }));
                 }
             } catch (e) {
-                console.error("Could not parse blocked users from AsyncStorage", e);
+                console.error("Could not read legacy blocked users from AsyncStorage", e);
             }
         };
 
-        loadBlockedUsers();
+        loadLegacyBlocks();
+    }, []);
+
+    const refreshBlockRelations = useCallback(async (userIdArg?: string) => {
+        const userId = userIdArg || userIdRef.current;
+        if (!userId) return;
+        const rows = await getBlockRelations();
+        if (rows === null) return; // server unavailable: keep current sets
+        const next = buildBlockSets(rows, legacyBlockedRef.current);
+        // Keep the same object when nothing changed so filters don't re-run.
+        setState(prevState => (sameBlockSets(prevState.blocks, next) ? prevState : { ...prevState, blocks: next }));
+        AsyncStorage.setItem(blockCacheKey(userId), JSON.stringify(rows)).catch(() => {});
+    }, []);
+
+    // One-time: push device-only username blocks to the server.
+    const migrateLegacyBlocks = useCallback(async (myId: string) => {
+        const names = legacyBlockedRef.current;
+        if (names.length === 0) return;
+        const { data, error } = await supabase.from('profiles').select('id, username').in('username', names);
+        if (error) return;
+        const results = await Promise.allSettled(
+            (data || [])
+                .filter((p: { id?: string }) => p.id && p.id !== myId)
+                .map((p: { id: string }) => blockUserById(p.id)),
+        );
+        if (results.every(r => r.status === 'fulfilled')) {
+            legacyBlockedRef.current = [];
+            AsyncStorage.removeItem(LEGACY_BLOCKED_USERS_KEY).catch(() => {});
+        }
     }, []);
 
     // Fetches notifications and messages, and subscribes to real-time updates.
@@ -278,13 +334,25 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const syncUserData = useCallback(async (user: User) => {
         try {
+            // Seed blocks from the last known server state so filtering works immediately.
+            try {
+                const cached = await AsyncStorage.getItem(blockCacheKey(user.id));
+                const rows = cached ? JSON.parse(cached) : null;
+                if (Array.isArray(rows)) {
+                    setState(prevState => ({ ...prevState, blocks: buildBlockSets(rows, legacyBlockedRef.current) }));
+                }
+            } catch {
+                // ignore a corrupt cache entry
+            }
+
             await ensureCurrentUserProfile();
 
             // Use Promise.all to fetch profile, likes, reposts, follows, and stories concurrently for better performance.
             const [profileResult, likesResult, repostsResult, savedPostsResult, followingResult, myStoriesResult, storyLikesResult, unreadMessagesResult] = await Promise.all([
                 supabase
                     .from('profiles')
-                    .select('full_name, username, avatar_url, is_verified, bio')
+                    // '*' so a missing is_admin column (before the migration) does not fail the query
+                    .select('*')
                     .eq('id', user.id)
                     .maybeSingle(),
                 supabase.from('likes').select('post_id').eq('user_id', user.id),
@@ -321,7 +389,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                     bio: profileData?.bio || prevState.userProfile.bio,
                 };
 
-                const isAdmin = newUserProfile.username === 'ahlan';
+                // Admin comes from profiles.is_admin; the username check is only a
+                // fallback until the 20260923 migration has been applied.
+                const isAdmin = typeof profileData?.is_admin === 'boolean'
+                    ? profileData.is_admin
+                    : (newUserProfile.username || '').toLowerCase() === 'ahlan';
 
                 const newLikedPosts = (likedPostsData && Array.isArray(likedPostsData))
                     ? new Set(likedPostsData.map(l => l.post_id))
@@ -357,11 +429,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                     isAdmin: isAdmin,
                 };
             });
+
+            void migrateLegacyBlocks(user.id).finally(() => { void refreshBlockRelations(user.id); });
         } catch (error) {
             console.error("Error syncing user data:", error);
             addToast("Could not sync your account data. Please try again later.", "error");
         }
-    }, [addToast]);
+    }, [addToast, migrateLegacyBlocks, refreshBlockRelations]);
+
+    // Refresh blocks when the app returns to the foreground, so a user who was
+    // just blocked stops seeing the blocker.
+    useEffect(() => {
+        if (!state.userProfile.id) return;
+        const subscription = RNAppState.addEventListener('change', (nextState) => {
+            if (nextState === 'active') void refreshBlockRelations();
+        });
+        return () => subscription.remove();
+    }, [state.userProfile.id, refreshBlockRelations]);
 
     const refreshAllData = useCallback(async () => {
         const { data: { user } } = await supabase.auth.getUser();
@@ -405,6 +489,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                     unreadChats: new Set(),
                     topNotification: null,
                     isAdmin: false,
+                    blocks: emptyBlockSets(),
                 }));
             }
         });
@@ -867,22 +952,74 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setState((prevState: AppState) => ({ ...prevState, isViewingStory: isViewing }));
     }, []);
 
-    const isUserBlocked = useCallback((username: string) => state.blockedUsers.has(username), [state.blockedUsers]);
+    const isUserBlocked = useCallback((username?: string | null) => isHiddenUsername(state.blocks, username), [state.blocks]);
+    const isUserIdBlocked = useCallback((userId?: string | null) => isHiddenUserId(state.blocks, userId), [state.blocks]);
+    const isBlockedByMe = useCallback((username?: string | null) => {
+        const name = normalizeUsername(username);
+        return !!name && state.blocks.blockedUsernames.has(name);
+    }, [state.blocks]);
+    const hasBlockedMe = useCallback((username?: string | null) => {
+        const name = normalizeUsername(username);
+        return !!name && state.blocks.blockedByUsernames.has(name);
+    }, [state.blocks]);
 
-    const toggleBlockUser = useCallback((username: string) => {
+    const setLocalBlock = useCallback((id: string, name: string, blocked: boolean) => {
         setState((prevState: AppState) => {
-            const newBlockedUsers = new Set(prevState.blockedUsers);
-            if (newBlockedUsers.has(username)) {
-                newBlockedUsers.delete(username);
+            const blockedIds = new Set(prevState.blocks.blockedIds);
+            const blockedUsernames = new Set(prevState.blocks.blockedUsernames);
+            const followedUsernames = new Set(prevState.followedUsernames);
+            if (blocked) {
+                blockedIds.add(id);
+                blockedUsernames.add(name);
+                followedUsernames.delete(name);
             } else {
-                newBlockedUsers.add(username);
+                blockedIds.delete(id);
+                blockedUsernames.delete(name);
             }
-            AsyncStorage.setItem(BLOCKED_USERS_KEY, JSON.stringify(Array.from(newBlockedUsers))).catch(error => {
-                console.error("Failed to save blocked users to AsyncStorage", error);
-            });
-            return { ...prevState, blockedUsers: newBlockedUsers };
+            return { ...prevState, followedUsernames, blocks: { ...prevState.blocks, blockedIds, blockedUsernames } };
         });
     }, []);
+
+    /** Blocks or unblocks a user on the server. Resolves true on success. */
+    const toggleBlockUser = useCallback(async (username: string, userId?: string): Promise<boolean> => {
+        const myId = state.userProfile.id;
+        const name = normalizeUsername(username);
+        if (!myId) {
+            addToast('You must be logged in to block users.', 'error');
+            return false;
+        }
+        if (!name) return false;
+
+        let targetId = userId;
+        if (!targetId) {
+            const { data } = await supabase.from('profiles').select('id').ilike('username', name).maybeSingle();
+            targetId = (data as { id?: string } | null)?.id;
+        }
+        if (!targetId || targetId === myId) return false;
+
+        const wasBlocked = state.blocks.blockedIds.has(targetId) || state.blocks.blockedUsernames.has(name);
+        setLocalBlock(targetId, name, !wasBlocked);
+        try {
+            if (wasBlocked) {
+                await unblockUserById(targetId);
+                legacyBlockedRef.current = legacyBlockedRef.current.filter(n => normalizeUsername(n) !== name);
+                AsyncStorage.setItem(LEGACY_BLOCKED_USERS_KEY, JSON.stringify(legacyBlockedRef.current)).catch(() => {});
+            } else {
+                await blockUserById(targetId);
+            }
+            invalidateProfileCache(username);
+            await refreshBlockRelations(myId);
+            // The server removed follows in both directions.
+            const usernames = await getFollowingList(myId);
+            setState(prev => ({ ...prev, followedUsernames: new Set(usernames.map(u => u.toLowerCase())) }));
+            return true;
+        } catch (error) {
+            console.error('Failed to toggle block:', error);
+            setLocalBlock(targetId, name, wasBlocked);
+            addToast(wasBlocked ? 'Could not unblock this account.' : 'Could not block this account.', 'error');
+            return false;
+        }
+    }, [state.userProfile.id, state.blocks, addToast, refreshBlockRelations, setLocalBlock]);
 
     const toggleVideoLike = useCallback((videoId: string) => {
         triggerHapticFeedback();
@@ -922,6 +1059,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
         const targetUserId = targetUserData.id;
         if (targetUserId === user.id) return;
+        if (isHiddenUserId(state.blocks, targetUserId)) {
+            addToast("You can't follow this account.", 'error');
+            return;
+        }
 
         const alreadyFollowing = state.followedUsernames.has(normalizedUsername);
 
@@ -962,7 +1103,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 return { ...prevState, followedUsernames: newFollowed };
             });
         }
-    }, [state.followedUsernames, addToast]);
+    }, [state.followedUsernames, state.blocks, addToast]);
 
     const isUserFollowed = useCallback(
         (username: string) => state.followedUsernames.has(username.trim().toLowerCase()),
@@ -1073,8 +1214,32 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setState((prevState: AppState) => ({ ...prevState, tooltip }));
     }, []);
 
+    // Notifications and unread chats from blocked accounts (either direction) are hidden everywhere.
+    const visibleNotifications = useMemo(() => (
+        state.notifications === null
+            ? null
+            : state.notifications.filter(n =>
+                !isHiddenUserId(state.blocks, n.sender?.id) && !isHiddenUsername(state.blocks, n.sender?.username))
+    ), [state.notifications, state.blocks]);
+
+    const visibleUnreadChats = useMemo(() => {
+        const visible = new Set<string>();
+        state.unreadChats.forEach(id => {
+            if (!isHiddenUserId(state.blocks, id)) visible.add(id);
+        });
+        return visible;
+    }, [state.unreadChats, state.blocks]);
+
     const contextValue = useMemo(() => ({
         ...state,
+        notifications: visibleNotifications,
+        unreadChats: visibleUnreadChats,
+        unreadMessageCount: visibleUnreadChats.size,
+        blockedUsers: state.blocks.blockedUsernames,
+        isUserIdBlocked,
+        isBlockedByMe,
+        hasBlockedMe,
+        refreshBlockRelations,
         togglePostLike,
         isPostLiked,
         togglePostRepost,
@@ -1122,6 +1287,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         replaceStory,
     }), [
         state,
+        visibleNotifications,
+        visibleUnreadChats,
+        isUserIdBlocked,
+        isBlockedByMe,
+        hasBlockedMe,
+        refreshBlockRelations,
         togglePostLike,
         isPostLiked,
         togglePostRepost,

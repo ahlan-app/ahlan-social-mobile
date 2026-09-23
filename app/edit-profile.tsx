@@ -64,10 +64,12 @@ export default function EditProfileScreen() {
       const promises: Promise<unknown>[] = [];
 
       if (avatarUri) {
+        // uploadAvatar compresses (max 1080px, 70% WebP) and saves avatar_url
         promises.push(
-          fetch(avatarUri)
-            .then((res) => res.blob())
-            .then((blob) => uploadAvatar(blob))
+          uploadAvatar(avatarUri).then((publicUrl) => {
+            if (publicUrl) updateProfile({ profilePicture: publicUrl });
+            return publicUrl;
+          })
         );
       }
 

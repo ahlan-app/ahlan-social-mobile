@@ -23,6 +23,7 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Alert,
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -37,11 +38,12 @@ import {
   getCommentLikesCount,
   isCommentLikedByUser,
   deleteComment as apiDeleteComment,
+  getPostOwnerId,
   cleanHtml,
 } from '../../services/apiService';
 import UserAvatar from '../../components/native/UserAvatar';
 import RenderUserContent from '../../components/native/RenderUserContent';
-import { HeartIcon, TrashIcon } from '../../components/native/Icons';
+import { HeartIcon, TrashIcon, VerifiedIcon } from '../../components/native/Icons';
 import type { Comment } from '../../types';
 
 const EMPTY_COMMENTS: Comment[] = [];
@@ -75,12 +77,14 @@ const removeCommentById = (comments: Comment[], idToRemove: string): Comment[] =
 
 const CommentItem: React.FC<{
   comment: Comment;
-  onDelete: (id: string) => void | Promise<void>;
+  onDelete: (comment: Comment) => void | Promise<void>;
   currentUserId?: string;
   currentUsername: string;
   currentAvatar?: string;
+  /** Post owners (and admins) may delete any comment on the post. */
+  canModerate: boolean;
   onViewProfile: (username: string) => void;
-}> = React.memo(({ comment, onDelete, currentUserId, currentUsername, onViewProfile }) => {
+}> = React.memo(({ comment, onDelete, currentUserId, currentUsername, canModerate, onViewProfile }) => {
   const [isLiked, setIsLiked] = useState(false);
   const [likesCount, setLikesCount] = useState(0);
   const { triggerHapticFeedback } = useApp();
@@ -119,9 +123,10 @@ const CommentItem: React.FC<{
     }
   };
 
-  const canDelete = comment.userId
+  const isOwnComment = comment.userId
     ? comment.userId === currentUserId
     : comment.username === currentUsername;
+  const canDelete = isOwnComment || canModerate;
 
   const rowContent = (
     <View className="px-4 py-3 border-b border-gray-800">
@@ -130,13 +135,11 @@ const CommentItem: React.FC<{
           <UserAvatar username={comment.username} avatarUrl={comment.avatar} size={40} />
         </Pressable>
         <View className="flex-1">
-          <Pressable onPress={() => onViewProfile(comment.username)}>
-            <Text className="text-white">
-              <Text className="font-bold">@{comment.username}</Text>
-              {'  '}
-              <Text className="text-gray-500 text-sm">
-                {formatDistanceToNow(comment.timestamp, { addSuffix: true })}
-              </Text>
+          <Pressable onPress={() => onViewProfile(comment.username)} className="flex-row items-center" style={{ gap: 4 }}>
+            <Text className="text-white font-bold">@{comment.username}</Text>
+            {comment.isVerified && <VerifiedIcon color="#3b82f6" size={14} />}
+            <Text className="text-gray-500 text-sm">
+              {'  '}{formatDistanceToNow(comment.timestamp, { addSuffix: true })}
             </Text>
           </Pressable>
           <View className="mt-1">
@@ -151,10 +154,11 @@ const CommentItem: React.FC<{
             </Pressable>
             {canDelete && (
               <Pressable
-                onPress={() => onDelete(comment.id)}
+                onPress={() => onDelete(comment)}
                 className="flex-row items-center"
                 style={{ gap: 4 }}
                 hitSlop={8}
+                accessibilityLabel="Delete comment"
               >
                 <TrashIcon color="#9ca3af" size={16} />
                 <Text className="text-gray-500 text-sm">Delete</Text>
@@ -174,7 +178,7 @@ const CommentItem: React.FC<{
       rightThreshold={36}
       renderRightActions={() => (
         <Pressable
-          onPress={() => onDelete(comment.id)}
+          onPress={() => onDelete(comment)}
           className="bg-red-600 justify-center items-center px-5"
         >
           <Text className="text-white font-semibold">Delete</Text>
@@ -191,8 +195,22 @@ const CommentItem: React.FC<{
 export default function CommentsScreen() {
   const { postId } = useLocalSearchParams<{ postId: string }>();
   const router = useRouter();
-  const { getComments, setComments, userProfile, isUserBlocked, postComment, addToast } = useApp();
+  const { getComments, setComments, userProfile, isUserBlocked, postComment, addToast, isAdmin } = useApp();
   const inputRef = useRef<TextInput>(null);
+  const [postOwnerId, setPostOwnerId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setPostOwnerId(null);
+    if (postId) {
+      getPostOwnerId(postId).then((ownerId) => {
+        if (!cancelled) setPostOwnerId(ownerId);
+      });
+    }
+    return () => { cancelled = true; };
+  }, [postId]);
+
+  const canModerate = isAdmin || (!!postOwnerId && postOwnerId === userProfile?.id);
 
   const [localComments, setLocalComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -269,7 +287,7 @@ export default function CommentsScreen() {
     postComment(postId, cleanHtml(text));
   };
 
-  const handleDeleteComment = useCallback(async (commentId: string) => {
+  const deleteCommentNow = useCallback(async (commentId: string) => {
     const previous = localComments;
     const updated = removeCommentById(localComments, commentId);
     if (updated === localComments) return;
@@ -283,11 +301,23 @@ export default function CommentsScreen() {
       await apiDeleteComment(commentId);
     } catch (error) {
       console.error('Failed to delete comment', error);
-      addToast('Failed to delete comment.', 'error');
+      addToast((error as Error)?.message || 'Failed to delete comment.', 'error');
       setLocalComments(previous);
       if (postId) setComments(postId, previous);
     }
   }, [addToast, localComments, postId, setComments]);
+
+  const handleDeleteComment = useCallback((comment: Comment) => {
+    const isOwn = comment.userId ? comment.userId === userProfile?.id : comment.username === userProfile?.username;
+    Alert.alert(
+      'Delete comment?',
+      isOwn ? 'Your comment will be removed.' : `The comment from @${comment.username} will be removed from your post.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => { void deleteCommentNow(comment.id); } },
+      ],
+    );
+  }, [deleteCommentNow, userProfile?.id, userProfile?.username]);
 
   const handleViewProfile = useCallback((username: string) => {
     router.push(`/user/${username}`);
@@ -301,10 +331,11 @@ export default function CommentsScreen() {
         currentUserId={userProfile?.id}
         currentUsername={userProfile?.username || ''}
         currentAvatar={userProfile?.profilePicture || undefined}
+        canModerate={canModerate}
         onViewProfile={handleViewProfile}
       />
     ),
-    [handleDeleteComment, handleViewProfile, userProfile?.id, userProfile?.username],
+    [handleDeleteComment, handleViewProfile, userProfile?.id, userProfile?.username, canModerate],
   );
 
   return (

@@ -62,12 +62,8 @@ export default function CameraScreen() {
     addToast('Uploading story...', 'info');
 
     try {
-      const response = await fetch(uri);
-      const blob = await response.blob();
-      const uploadBlob = blob.type
-        ? blob
-        : new Blob([blob], { type: 'image/jpeg' });
-      const realStory = await uploadStory(uploadBlob, null, userProfile.id);
+      // uploadStory compresses the image (max 1080px, 70% WebP) before upload
+      const realStory = await uploadStory(uri, null, userProfile.id);
       if (realStory) {
         replaceStory(localId, realStory);
       } else {

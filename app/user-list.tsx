@@ -141,7 +141,7 @@ export default function UserListScreen() {
                 </Text>
                 {item.isVerified && (
                   <View className="ml-1">
-                    <VerifiedIcon size={16} />
+                    <VerifiedIcon color="#3b82f6" size={16} />
                   </View>
                 )}
               </View>

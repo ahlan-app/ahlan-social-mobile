@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -90,6 +90,8 @@ const REPORT_REASONS = [
   "I just don't like their content",
 ];
 
+const EMPTY_POSTS: Post[] = [];
+
 export default function UserProfileScreen() {
   const { username } = useLocalSearchParams<{ username: string }>();
   const router = useRouter();
@@ -97,7 +99,9 @@ export default function UserProfileScreen() {
     userProfile: myProfile,
     isUserFollowed,
     toggleFollowUser,
-    isUserBlocked,
+    isBlockedByMe,
+    hasBlockedMe,
+    refreshBlockRelations,
     toggleBlockUser,
     addToast,
     isAdmin,
@@ -114,15 +118,26 @@ export default function UserProfileScreen() {
   const [menuVisible, setMenuVisible] = useState(false);
   const [reportMenuVisible, setReportMenuVisible] = useState(false);
   const [followPending, setFollowPending] = useState(false);
+  const [verifyPending, setVerifyPending] = useState(false);
 
   const isFollowing = isUserFollowed(username || '');
-  const isBlocked = isUserBlocked(username || '');
+  const isBlocked = isBlockedByMe(username);              // I blocked them
+  const blockedMe = !isBlocked && hasBlockedMe(username); // they blocked me
   const isMyProfile = myProfile?.username === username;
+  const [blockPending, setBlockPending] = useState(false);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (force = false) => {
     if (!username) return;
+    // Learn about blocks made by the other side as soon as the profile opens.
+    void refreshBlockRelations();
     try {
-      const profileData = await getUserProfile(username);
+      const profileData = await getUserProfile(username, { force });
+      if (!mountedRef.current) return;
       setProfile(profileData);
       if (profileData) {
         const [userPosts, userReposts, followers, following] = await Promise.all([
@@ -131,6 +146,7 @@ export default function UserProfileScreen() {
           getFollowerCount(profileData.id),
           getFollowingCount(profileData.id),
         ]);
+        if (!mountedRef.current) return;
         setPosts(userPosts);
         setReposts(userReposts);
         setFollowerCount(followers);
@@ -139,9 +155,9 @@ export default function UserProfileScreen() {
     } catch (error) {
       console.error('Failed to load user profile', error);
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
-  }, [username]);
+  }, [username, refreshBlockRelations]);
 
   useEffect(() => {
     fetchData();
@@ -177,12 +193,12 @@ export default function UserProfileScreen() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchData();
+    await fetchData(true);
     setRefreshing(false);
   }, [fetchData]);
 
   const handleToggleFollow = useCallback(async () => {
-    if (!username || !profile?.id || isMyProfile || followPending) return;
+    if (!username || !profile?.id || isMyProfile || followPending || isBlocked || blockedMe) return;
     const wasFollowing = isFollowing;
 
     setFollowPending(true);
@@ -199,30 +215,55 @@ export default function UserProfileScreen() {
     } finally {
       setFollowPending(false);
     }
-  }, [username, profile?.id, isMyProfile, followPending, isFollowing, toggleFollowUser]);
+  }, [username, profile?.id, isMyProfile, followPending, isBlocked, blockedMe, isFollowing, toggleFollowUser]);
+
+  const runToggleBlock = useCallback(async (nextBlocked: boolean) => {
+    if (!profile?.id || blockPending) return;
+    setBlockPending(true);
+    try {
+      const ok = await toggleBlockUser(profile.username, profile.id);
+      if (!ok || !mountedRef.current) return;
+      addToast(
+        `@${profile.username} has been ${nextBlocked ? 'blocked' : 'unblocked'}.`,
+        nextBlocked ? 'info' : 'success',
+      );
+      if (nextBlocked) {
+        setPosts([]);
+        setReposts([]);
+        setActiveTab('posts');
+      } else {
+        await fetchData(true);
+      }
+      const [followers, following] = await Promise.all([
+        getFollowerCount(profile.id),
+        getFollowingCount(profile.id),
+      ]);
+      if (mountedRef.current) {
+        setFollowerCount(followers);
+        setFollowingCount(following);
+      }
+    } finally {
+      if (mountedRef.current) setBlockPending(false);
+    }
+  }, [profile?.id, profile?.username, blockPending, toggleBlockUser, addToast, fetchData]);
 
   const handleBlockToggle = () => {
     setMenuVisible(false);
     if (isBlocked) {
-      toggleBlockUser(username || '');
-      addToast(`@${username} has been unblocked.`, 'success');
-    } else {
+      void runToggleBlock(false);
+      return;
+    }
+    // Let the menu modal finish closing before the native alert opens.
+    setTimeout(() => {
       Alert.alert(
         `Block @${username}?`,
         "They won't be able to find your profile, posts, or story, and they won't be notified.",
         [
           { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Block',
-            style: 'destructive',
-            onPress: () => {
-              toggleBlockUser(username || '');
-              addToast(`@${username} has been blocked.`, 'info');
-            },
-          },
+          { text: 'Block', style: 'destructive', onPress: () => { void runToggleBlock(true); } },
         ],
       );
-    }
+    }, 300);
   };
 
   const handleReport = async (reason: string) => {
@@ -240,16 +281,36 @@ export default function UserProfileScreen() {
     }
   };
 
-  const handleToggleVerify = async () => {
+  // The badge only changes after the server confirms it, so it never flips back.
+  const applyVerify = useCallback(async (next: boolean) => {
     if (!profile) return;
+    setVerifyPending(true);
     try {
-      setProfile(prev => prev ? { ...prev, isVerified: !prev.isVerified } : null);
-      await setUserVerified(profile.id, profile.username, !profile.isVerified);
-      addToast(`User ${profile.isVerified ? 'unverified' : 'verified'} successfully.`, 'success');
+      const stored = await setUserVerified(profile.id, profile.username, next);
+      setProfile(prev => (prev ? { ...prev, isVerified: stored } : prev));
+      setPosts(prev => prev.map(p => (p.username === profile.username ? { ...p, isVerified: stored } : p)));
+      addToast(
+        stored ? `@${profile.username} now has the blue badge.` : `Blue badge removed from @${profile.username}.`,
+        'success',
+      );
     } catch (error) {
-      setProfile(prev => prev ? { ...prev, isVerified: !prev.isVerified } : null);
-      addToast('Error updating verification status.', 'error');
+      addToast((error as Error)?.message || 'Error updating verification status.', 'error');
+    } finally {
+      setVerifyPending(false);
     }
+  }, [profile, addToast]);
+
+  const handleToggleVerify = () => {
+    if (!profile || verifyPending) return;
+    const next = !profile.isVerified;
+    if (!next) {
+      Alert.alert('Remove blue badge?', `@${profile.username} will no longer be verified.`, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Remove', style: 'destructive', onPress: () => { void applyVerify(false); } },
+      ]);
+      return;
+    }
+    void applyVerify(true);
   };
 
   const handlePostPress = useCallback((post: Post) => {
@@ -261,6 +322,26 @@ export default function UserProfileScreen() {
     <GridTile post={item} onPress={() => handlePostPress(item)} />
   );
   const emptyMessage = activeTab === 'posts' ? 'No posts yet.' : 'No reposts yet.';
+
+  // The other user blocked me: behave as if the account does not exist.
+  if (blockedMe) {
+    return (
+      <SafeAreaView className="flex-1 bg-black">
+        <Stack.Screen
+          options={{
+            headerShown: true,
+            title: `@${username}`,
+            headerStyle: { backgroundColor: '#000' },
+            headerTintColor: '#fff',
+            headerTitleStyle: { fontWeight: 'bold' },
+          }}
+        />
+        <View className="flex-1 justify-center items-center px-8">
+          <Text className="text-gray-400 text-lg text-center">This account isn't available.</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   // Loading state
   if (loading && !profile) {
@@ -348,10 +429,11 @@ export default function UserProfileScreen() {
         {isAdmin && !isMyProfile && (
           <Pressable
             onPress={handleToggleVerify}
-            className={`mt-3 px-4 py-1.5 rounded self-start ${profile.isVerified ? 'bg-red-600' : 'bg-blue-600'}`}
+            disabled={verifyPending}
+            className={`mt-3 px-4 py-1.5 rounded self-start ${profile.isVerified ? 'bg-red-600' : 'bg-blue-600'} ${verifyPending ? 'opacity-60' : ''}`}
           >
             <Text className="text-white text-sm font-semibold">
-              {profile.isVerified ? 'Unverify Account' : 'Verify Account'}
+              {verifyPending ? '...' : profile.isVerified ? 'Remove Blue Badge' : 'Give Blue Badge'}
             </Text>
           </Pressable>
         )}
@@ -362,9 +444,10 @@ export default function UserProfileScreen() {
             {isBlocked ? (
               <Pressable
                 onPress={handleBlockToggle}
-                className="flex-1 bg-white py-2 rounded-full items-center"
+                disabled={blockPending}
+                className={`flex-1 bg-white py-2 rounded-full items-center ${blockPending ? 'opacity-60' : ''}`}
               >
-                <Text className="text-black font-semibold">Unblock</Text>
+                <Text className="text-black font-semibold">{blockPending ? '...' : 'Unblock'}</Text>
               </Pressable>
             ) : (
               <>
@@ -437,41 +520,31 @@ export default function UserProfileScreen() {
         }}
       />
 
-      {isBlocked ? (
-        <FlatList
-          data={[]}
-          renderItem={() => null}
-          ListHeaderComponent={ProfileHeader}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#3b82f6" />
-          }
-          contentContainerStyle={{ flexGrow: 1 }}
-        />
-      ) : (
-        <FlatList
-          data={currentData}
-          renderItem={renderItem}
-          keyExtractor={item => item.id}
-          numColumns={NUM_COLUMNS}
-          ListHeaderComponent={ProfileHeader}
-          ListEmptyComponent={
-            loading ? (
-              <View className="py-4">
-                <PostSkeleton />
-                <PostSkeleton />
-              </View>
-            ) : (
-              <View className="py-20 items-center">
-                <Text className="text-gray-500 text-lg">{emptyMessage}</Text>
-              </View>
-            )
-          }
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#3b82f6" />
-          }
-          contentContainerStyle={{ flexGrow: 1 }}
-        />
-      )}
+      {/* One FlatList with a constant numColumns: swapping lists with different
+          numColumns on block/unblock threw an invariant and crashed the app. */}
+      <FlatList
+        data={isBlocked ? EMPTY_POSTS : currentData}
+        renderItem={renderItem}
+        keyExtractor={item => item.id}
+        numColumns={NUM_COLUMNS}
+        ListHeaderComponent={ProfileHeader}
+        ListEmptyComponent={
+          isBlocked ? null : loading ? (
+            <View className="py-4">
+              <PostSkeleton />
+              <PostSkeleton />
+            </View>
+          ) : (
+            <View className="py-20 items-center">
+              <Text className="text-gray-500 text-lg">{emptyMessage}</Text>
+            </View>
+          )
+        }
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#3b82f6" />
+        }
+        contentContainerStyle={{ flexGrow: 1 }}
+      />
 
       {/* Options Menu Modal */}
       <Modal visible={menuVisible} transparent animationType="fade" onRequestClose={() => setMenuVisible(false)}>
@@ -488,7 +561,7 @@ export default function UserProfileScreen() {
               <Text className="text-red-400 text-base font-semibold">Report User</Text>
             </Pressable>
 
-            <Pressable onPress={handleBlockToggle} className="flex-row items-center px-6 py-4">
+            <Pressable onPress={handleBlockToggle} disabled={blockPending} className="flex-row items-center px-6 py-4">
               <Text className={`text-base font-semibold ${isBlocked ? 'text-white' : 'text-red-400'}`}>
                 {isBlocked ? 'Unblock' : 'Block'}
               </Text>

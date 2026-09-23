@@ -127,6 +127,7 @@ export interface Comment {
     userId?: string;
     username: string;
     avatar: string | null;
+    isVerified?: boolean;
     text: string;
     timestamp: Date;
     likes: number;

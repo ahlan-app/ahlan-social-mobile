@@ -101,13 +101,9 @@ export default function StoryCreateScreen() {
 
       try {
         if (options.imageUri) {
-          const response = await fetch(options.imageUri);
-          const blob = await response.blob();
-          const uploadBlob = blob.type
-            ? blob
-            : new Blob([blob], { type: 'image/jpeg' });
+          // uploadStory compresses the image (max 1080px, 70% WebP) before upload
           const realStory = await uploadStory(
-            uploadBlob,
+            options.imageUri,
             caption.trim() || null,
             userProfile.id,
           );
