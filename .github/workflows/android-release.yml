@@ -6,13 +6,17 @@ name: Android Release (AAB + APK)
 # Required repository secrets (Settings → Secrets and variables → Actions):
 #   EXPO_PUBLIC_SUPABASE_URL          Supabase project URL
 #   EXPO_PUBLIC_SUPABASE_ANON_KEY     Supabase anon (public) key
-#   ANDROID_UPLOAD_KEYSTORE_BASE64    base64 of the upload keystore (.jks)
+#   ANDROID_UPLOAD_KEYSTORE_BASE64    base64 -w0 of the keystore (.jks)
 #   ANDROID_UPLOAD_KEYSTORE_PASSWORD  keystore password
 #   ANDROID_UPLOAD_KEY_ALIAS          key alias
 #   ANDROID_UPLOAD_KEY_PASSWORD       key password
+# Recommended repository variable:
+#   ANDROID_SIGNING_CERT_SHA256       lowercase hex SHA-256 of the upload key's
+#                                     certificate; the build fails if the
+#                                     artifacts are signed with any other key.
 #
 # Trigger: push a tag matching app.json's version (e.g. v1.0.9), or run it
-# manually from the Actions tab.
+# manually from the Actions tab (workflow_dispatch needs this file on main).
 
 on:
   push:
@@ -36,7 +40,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
-      NODE_ENV: production
+      # NOTE: do NOT set NODE_ENV=production at job level: npm ci would then
+      # skip devDependencies (typescript, jest, tailwindcss) and the build fails.
       EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
       EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
       ANDROID_UPLOAD_KEYSTORE_BASE64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
@@ -44,6 +49,10 @@ jobs:
       AHLAN_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
       AHLAN_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
       AHLAN_REQUIRE_RELEASE_SIGNING: 'true'
+      EXPECTED_CERT_SHA256: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
+      # Play: every ABI (Play serves per-device splits). GitHub APK: ARM phones only.
+      AAB_ABIS: armeabi-v7a,arm64-v8a,x86,x86_64
+      APK_ABIS: armeabi-v7a,arm64-v8a
 
     steps:
       - name: Check required secrets
@@ -73,16 +82,25 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      - name: Gradle memory for release builds
+        run: |
+          mkdir -p ~/.gradle
+          {
+            echo "org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
+            echo "kotlin.daemon.jvmargs=-Xmx2g"
+          } >> ~/.gradle/gradle.properties
+
       - name: Resolve version and tag
         id: version
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           VERSION=$(node -p "require('./app.json').expo.version")
           VERSION_CODE=$(node -p "require('./app.json').expo.android.versionCode")
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             TAG="${GITHUB_REF_NAME}"
           else
-            TAG="${{ inputs.tag }}"
-            [ -z "$TAG" ] && TAG="v${VERSION}"
+            TAG="${INPUT_TAG:-v${VERSION}}"
           fi
           if [ "$TAG" != "v${VERSION}" ]; then
             echo "::error::Tag $TAG does not match app.json version v${VERSION}"
@@ -108,23 +126,59 @@ jobs:
           echo "$ANDROID_UPLOAD_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/upload.jks"
           echo "AHLAN_UPLOAD_STORE_FILE=$RUNNER_TEMP/upload.jks" >> "$GITHUB_ENV"
 
-      - name: Build AAB and APK
+      - name: Build AAB (Google Play)
         working-directory: android
-        run: ./gradlew --no-daemon bundleRelease assembleRelease
+        env:
+          NODE_ENV: production
+        run: ./gradlew --no-daemon bundleRelease -PreactNativeArchitectures="$AAB_ABIS"
 
-      - name: Verify signatures and 16 KB alignment
+      - name: Build APK (direct download)
+        working-directory: android
+        env:
+          NODE_ENV: production
+        run: ./gradlew --no-daemon assembleRelease -PreactNativeArchitectures="$APK_ABIS"
+
+      - name: Verify signatures and 16 KB page size
         run: |
           BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          OBJDUMP=$(ls "$ANDROID_HOME"/ndk/*/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump | sort -V | tail -1)
           APK=android/app/build/outputs/apk/release/app-release.apk
           AAB=android/app/build/outputs/bundle/release/app-release.aab
-          # Google Play requires 16 KB page-size compatible native libraries.
-          "$BUILD_TOOLS/zipalign" -c -P 16 -v 4 "$APK" > /dev/null
+
+          # 1) Signed, not with the debug key, and with the expected certificate.
           "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" | tee apk-certs.txt
-          jarsigner -verify -certs "$AAB" | tail -n 3
-          if grep -q "CN=Android Debug" apk-certs.txt || jarsigner -verify -verbose -certs "$AAB" | grep -q "CN=Android Debug"; then
-            echo "::error::Release artifacts are signed with the debug key"
-            exit 1
+          jarsigner -verify "$AAB" | tail -n 1
+          APK_SHA=$(awk -F': ' '/Signer #1 certificate SHA-256 digest/{print $2}' apk-certs.txt)
+          AAB_SHA=$(keytool -printcert -jarfile "$AAB" | awk '/SHA256:/{print $2}' | tr -d ':' | tr 'A-F' 'a-f')
+          if grep -q "CN=Android Debug" apk-certs.txt || keytool -printcert -jarfile "$AAB" | grep -q "CN=Android Debug"; then
+            echo "::error::Release artifacts are signed with the debug key"; exit 1
           fi
+          if [ "$APK_SHA" != "$AAB_SHA" ]; then
+            echo "::error::APK ($APK_SHA) and AAB ($AAB_SHA) are signed with different keys"; exit 1
+          fi
+          if [ -n "$EXPECTED_CERT_SHA256" ] && [ "$APK_SHA" != "$EXPECTED_CERT_SHA256" ]; then
+            echo "::error::Signing cert $APK_SHA != expected $EXPECTED_CERT_SHA256 (APK would not update v1.0.x installs)"; exit 1
+          fi
+
+          # 2) 16 KB: zip alignment of uncompressed .so files in the APK ...
+          "$BUILD_TOOLS/zipalign" -c -P 16 -v 4 "$APK" > /dev/null
+          # ... and ELF LOAD segment alignment >= 2**14 for 64-bit libs (APK + AAB).
+          check_elf() {
+            local archive="$1" work bad=0 so abi
+            work=$(mktemp -d)
+            unzip -q -o "$archive" 'lib/*' 'base/lib/*' -d "$work" 2>/dev/null || true
+            while IFS= read -r so; do
+              abi=$(basename "$(dirname "$so")")
+              case "$abi" in arm64-v8a|x86_64) ;; *) continue ;; esac
+              if ! "$OBJDUMP" -p "$so" | awk '$1=="LOAD"{ split($NF, a, "\\*\\*"); if (a[2]+0 < 14) bad=1 } END{ exit bad }'; then
+                echo "::error::$archive: $abi/$(basename "$so") is not 16 KB aligned"; bad=1
+              fi
+            done < <(find "$work" -name '*.so')
+            rm -rf "$work"
+            return $bad
+          }
+          check_elf "$APK"
+          check_elf "$AAB"
 
       - name: Collect release files
         run: |

@@ -104,6 +104,14 @@ BEGIN
     DELETE FROM public.notifications
      WHERE (sender_id = v_me AND receiver_id = p_target)
         OR (sender_id = p_target AND receiver_id = v_me);
+
+    -- Like Instagram: the blocked user's comments and likes on my posts go away.
+    DELETE FROM public.comments c
+     USING public.posts p
+     WHERE p.id = c.post_id AND p.user_id = v_me AND c.user_id = p_target;
+    DELETE FROM public.likes l
+     USING public.posts p
+     WHERE p.id = l.post_id AND p.user_id = v_me AND l.user_id = p_target;
 END;
 $$;
 

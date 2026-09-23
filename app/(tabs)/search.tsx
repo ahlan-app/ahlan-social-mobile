@@ -27,12 +27,14 @@ import {
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useApp } from '../../store/AppContext.native';
 import {
   getTrendingPosts,
   getAllHashtags,
   searchUsers,
 } from '../../services/apiService';
+import { queryKeys } from '../../services/queryKeys';
 import UserAvatar from '../../components/native/UserAvatar';
 import { SearchIcon, VerifiedIcon, HeartIcon, CommentIcon } from '../../components/native/Icons';
 import RenderUserContent from '../../components/native/RenderUserContent';
@@ -45,6 +47,24 @@ const screenWidth = Dimensions.get('window').width;
 const tileSize = (screenWidth - GRID_GAP * (NUM_COLUMNS - 1)) / NUM_COLUMNS;
 
 type FilterType = 'users' | 'posts' | 'hashtags';
+
+const USER_SEARCH_DEBOUNCE_MS = 300;
+// Search results are throwaway: drop them from the (persisted) cache soon
+// after they stop being shown instead of keeping every typed term for a week.
+const USER_SEARCH_GC_TIME = 1000 * 60 * 30;
+// Hashtags are public, viewer-independent data (no entry in queryKeys yet).
+
+const EMPTY_POSTS: Post[] = [];
+const EMPTY_HASHTAGS: Hashtag[] = [];
+
+/** Row shape returned by searchUsers (profiles table). */
+type SearchUserRow = {
+  id: string;
+  username: string;
+  full_name?: string | null;
+  avatar_url?: string | null;
+  is_verified?: boolean | null;
+};
 
 // ─── Sub-components ──────────────────────────────
 
@@ -135,70 +155,83 @@ const ExploreTile: React.FC<{ post: Post; onPress: () => void }> = React.memo(({
 
 export default function SearchScreen() {
   const router = useRouter();
-  const { isUserBlocked } = useApp();
+  const { isUserBlocked, isUserIdBlocked } = useApp();
 
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedTerm, setDebouncedTerm] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [activeFilter, setActiveFilter] = useState<FilterType>('users');
-
-  const [trendingPosts, setTrendingPosts] = useState<Post[]>([]);
-  const [hashtags, setHashtags] = useState<Hashtag[]>([]);
-  const [userResults, setUserResults] = useState<SimpleUser[]>([]);
-  const [isUserSearchLoading, setIsUserSearchLoading] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // ─── Data loading ──────────────────────────────
+  // ─── Data loading (cached; refreshed in the background) ─
 
-  const loadExploreData = useCallback(async () => {
-    try {
-      const [postsData, hashtagsData] = await Promise.all([
-        getTrendingPosts(),
-        getAllHashtags(),
-      ]);
-      setTrendingPosts(postsData);
-      setHashtags(hashtagsData);
-    } catch (error) {
-      console.error('Search data load error:', error);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const trendingQuery = useQuery({
+    queryKey: queryKeys.trending(),
+    queryFn: () => getTrendingPosts(),
+  });
+  const hashtagsQuery = useQuery({
+    queryKey: queryKeys.hashtags(),
+    queryFn: () => getAllHashtags(),
+  });
 
-  useEffect(() => {
-    loadExploreData();
-  }, [loadExploreData]);
+  const trendingPosts = trendingQuery.data ?? EMPTY_POSTS;
+  const hashtags = hashtagsQuery.data ?? EMPTY_HASHTAGS;
+  // Skeleton only on a cold start: cached posts render immediately.
+  const loading = trendingQuery.isPending && !trendingQuery.data;
 
+  const refetchTrending = trendingQuery.refetch;
+  const refetchHashtags = hashtagsQuery.refetch;
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadExploreData();
-    setRefreshing(false);
-  }, [loadExploreData]);
+    try {
+      await Promise.all([refetchTrending(), refetchHashtags()]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refetchTrending, refetchHashtags]);
 
   // ─── User search with debounce ─────────────────
 
   useEffect(() => {
-    if (!isSearching || activeFilter !== 'users' || !searchTerm.trim()) {
-      setUserResults([]);
-      return;
-    }
-
-    setIsUserSearchLoading(true);
-    const timer = setTimeout(async () => {
-      const usersFromApi = await searchUsers(searchTerm);
-      const mapped: SimpleUser[] = usersFromApi.map((u: any) => ({
-        id: u.id,
-        name: u.full_name,
-        username: u.username,
-        avatar: u.avatar_url,
-        isVerified: u.is_verified,
-      }));
-      setUserResults(mapped.filter(u => !isUserBlocked(u.username)));
-      setIsUserSearchLoading(false);
-    }, 300);
-
+    const timer = setTimeout(() => setDebouncedTerm(searchTerm), USER_SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [searchTerm, activeFilter, isSearching, isUserBlocked]);
+  }, [searchTerm]);
+
+  const trimmedTerm = searchTerm.trim();
+  const userSearchTerm = debouncedTerm.trim();
+  const isDebouncing = trimmedTerm !== userSearchTerm;
+
+  const userSearchQuery = useQuery({
+    queryKey: queryKeys.userSearch(userSearchTerm),
+    queryFn: () => searchUsers(userSearchTerm),
+    enabled: isSearching && activeFilter === 'users' && userSearchTerm.length > 0,
+    placeholderData: keepPreviousData,
+    gcTime: USER_SEARCH_GC_TIME,
+  });
+
+  const rawUserResults = userSearchQuery.data as SearchUserRow[] | undefined;
+  const userResults = useMemo<SimpleUser[]>(
+    () =>
+      (rawUserResults ?? [])
+        .map((u) => ({
+          id: u.id,
+          name: u.full_name ?? '',
+          username: u.username,
+          avatar: u.avatar_url ?? null,
+          isVerified: Boolean(u.is_verified),
+        }))
+        .filter(u => !isUserIdBlocked(u.id) && !isUserBlocked(u.username)),
+    [rawUserResults, isUserBlocked, isUserIdBlocked]
+  );
+
+  // Previous results stay on screen while a new term loads; the spinner is
+  // only shown when there is nothing to show yet (a cached result for this
+  // term, even an empty one, is shown while it refreshes in the background).
+  const isUserSearchLoading =
+    userResults.length === 0 &&
+    (isDebouncing ||
+      userSearchQuery.isPending ||
+      (userSearchQuery.isPlaceholderData && userSearchQuery.isFetching));
 
   // ─── Filtered data ─────────────────────────────
 
@@ -237,13 +270,13 @@ export default function SearchScreen() {
 
   const renderSearchContent = () => {
     if (activeFilter === 'users') {
-      if (isUserSearchLoading) {
-        return <ActivityIndicator color="#3b82f6" className="mt-16" />;
-      }
-      if (!searchTerm.trim()) {
+      if (!trimmedTerm) {
         return (
           <Text className="text-gray-500 text-center p-8">Start typing to search for users.</Text>
         );
+      }
+      if (isUserSearchLoading) {
+        return <ActivityIndicator color="#3b82f6" className="mt-16" />;
       }
       if (userResults.length === 0) {
         return (

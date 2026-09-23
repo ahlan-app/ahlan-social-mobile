@@ -25,16 +25,22 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import {
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+  type InfiniteData,
+  type QueryKey,
+} from '@tanstack/react-query';
 import { useApp } from '../../store/AppContext.native';
 import {
-  FEED_PAGE_SIZE,
-  getTimeline,
-  getMorePosts,
-  resetPageCounter,
+  getTimelinePage,
   getStories,
   getPostById,
   getSmartUserSuggestions,
+  type FeedPage,
 } from '../../services/apiService';
+import { queryKeys } from '../../services/queryKeys';
 import { supabase } from '../../services/supabase.native';
 import PostCard from '../../components/native/PostCard';
 import PostSkeleton from '../../components/native/PostSkeleton';
@@ -43,12 +49,13 @@ import UserAvatar from '../../components/native/UserAvatar';
 import { VerifiedIcon, BellIcon, SendIcon } from '../../components/native/Icons';
 import type { Post, Story, SimpleUser } from '../../types';
 
-const appendUniquePosts = (current: Post[], incoming: Post[]): Post[] => {
-  if (incoming.length === 0) return current;
-  const seen = new Set(current.map(post => post.id));
-  const next = incoming.filter(post => !seen.has(post.id));
-  return next.length === 0 ? current : [...current, ...next];
-};
+type FeedData = InfiniteData<FeedPage, string | null>;
+
+const STORY_LIFETIME_MS = 24 * 60 * 60 * 1000;
+// How long after a pull-to-refresh / follow change an empty stories result is
+// taken at face value (a window rather than a one-shot flag, so a fetch that
+// gets cancelled and restarted by an invalidation still trusts it).
+const TRUST_EMPTY_STORIES_MS = 15 * 1000;
 
 const dedupeStoriesById = (stories: Story[]): Story[] => {
   const seen = new Set<string>();
@@ -59,6 +66,45 @@ const dedupeStoriesById = (stories: Story[]): Story[] => {
     unique.push(story);
   }
   return unique;
+};
+
+// Stories are persisted with the rest of the query cache (up to a week), so
+// hide the ones whose 24h window ended while the app was closed.
+const isStoryLive = (story: Story, now: number): boolean => {
+  const createdAt = new Date(story.timestamp).getTime();
+  return Number.isNaN(createdAt) || now - createdAt < STORY_LIFETIME_MS;
+};
+
+const feedHasPost = (data: FeedData, postId: string): boolean =>
+  data.pages.some(page => page.posts.some(post => post.id === postId));
+
+const prependFeedPost = (data: FeedData, post: Post): FeedData => {
+  if (data.pages.length === 0 || feedHasPost(data, post.id)) return data;
+  const [first, ...rest] = data.pages;
+  return { ...data, pages: [{ ...first, posts: [post, ...first.posts] }, ...rest] };
+};
+
+const replaceFeedPost = (data: FeedData, post: Post): FeedData => {
+  let changed = false;
+  const pages = data.pages.map(page => {
+    const index = page.posts.findIndex(item => item.id === post.id);
+    if (index === -1) return page;
+    changed = true;
+    const posts = page.posts.slice();
+    posts[index] = post;
+    return { ...page, posts };
+  });
+  return changed ? { ...data, pages } : data;
+};
+
+const removeFeedPost = (data: FeedData, postId: string): FeedData => {
+  let changed = false;
+  const pages = data.pages.map(page => {
+    if (!page.posts.some(post => post.id === postId)) return page;
+    changed = true;
+    return { ...page, posts: page.posts.filter(post => post.id !== postId) };
+  });
+  return changed ? { ...data, pages } : data;
 };
 
 export default function HomeFeedScreen() {
@@ -73,44 +119,134 @@ export default function HomeFeedScreen() {
     unreadMessageCount,
   } = useApp();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const unreadNotificationCount = notifications?.filter(n => !n.is_read).length ?? 0;
 
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [storyGroups, setStoryGroups] = useState<StoryGroup[]>([]);
-  const [allStories, setAllStories] = useState<Story[]>([]);
-  const allStoriesRef = useRef<Story[]>([]);
-  const [suggestedUsers, setSuggestedUsers] = useState<SimpleUser[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
+  // userProfile.id is only filled in after the profile round-trips to the
+  // server; the locally stored session knows who is signed in right away, so
+  // the cached feed can be shown instantly after an app restart. The id follows
+  // every auth change (INITIAL_SESSION is emitted to new listeners), so after a
+  // sign-out it is cleared in the same batch as userProfile and the previous
+  // account's queries are never re-enabled (the tabs stay mounted under
+  // /settings when signing out from there).
+  const [sessionUserId, setSessionUserId] = useState<string | null>(null);
+  const profileId = userProfile?.id || null;
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSessionUserId(session?.user?.id ?? null);
+    });
+    return () => { subscription.unsubscribe(); };
+  }, []);
+  const viewerId = profileId || sessionUserId;
+
   const [refreshing, setRefreshing] = useState(false);
+  const hasFollows = Boolean(followedUsernames && followedUsernames.size > 0);
 
-  const loadSuggestions = useCallback(async (userId: string) => {
-    try {
-      const suggestions = await getSmartUserSuggestions(userId);
-      const mappedSuggestions: SimpleUser[] = (suggestions || [])
-        .map((suggestion: any) => ({
-          id: suggestion.suggested_user_id || suggestion.id || suggestion.username,
-          username: suggestion.username || '',
-          name: suggestion.username || 'Ahlan user',
-          avatar: suggestion.avatar_url || null,
-          isVerified: Boolean(suggestion.is_verified),
-        }))
-        .filter((user: SimpleUser) => Boolean(user.username) && !isUserBlocked(user.username));
-      setSuggestedUsers(mappedSuggestions);
-    } catch (error) {
-      console.error('Suggestion load error:', error);
-      setSuggestedUsers([]);
+  // ---- Feed -----------------------------------------------------------------
+  const feedKey = useMemo(() => queryKeys.feed(viewerId ?? ''), [viewerId]);
+  const feedQuery = useInfiniteQuery({
+    queryKey: feedKey,
+    queryFn: async ({ pageParam }) => {
+      const page = await getTimelinePage(pageParam);
+      // getTimelinePage() also answers an empty page when auth.getUser() fails
+      // (e.g. offline). Before an empty first page replaces a cached feed,
+      // confirm with the auth server; a failure keeps the cached pages.
+      if (pageParam === null && page.posts.length === 0) {
+        const cached = queryClient.getQueryData<FeedData>(feedKey);
+        if (cached?.pages.some(cachedPage => (cachedPage?.posts?.length ?? 0) > 0)) {
+          const { data, error } = await supabase.auth.getUser();
+          if (error || !data.user) throw error ?? new Error('Feed refresh without a signed-in user');
+        }
+      }
+      return page;
+    },
+    initialPageParam: null as string | null,
+    getNextPageParam: lastPage => lastPage.nextCursor,
+    enabled: !!viewerId,
+  });
+  const {
+    data: feedData,
+    error: feedError,
+    isError: isFeedError,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+    refetch: refetchFeed,
+  } = feedQuery;
+
+  // Skeleton only while there is nothing (not even cached pages) to show.
+  const isLoading = feedQuery.isPending && !feedData;
+  const isLoadingMore = isFetchingNextPage;
+
+  // Pages flattened with de-dup by id (a realtime prepend can overlap a page
+  // boundary); blocks are applied here so a block change filters instantly.
+  const posts = useMemo(() => {
+    const seen = new Set<string>();
+    const visible: Post[] = [];
+    for (const page of feedData?.pages ?? []) {
+      for (const post of page?.posts ?? []) {
+        if (!post?.id || seen.has(post.id)) continue;
+        seen.add(post.id);
+        if (isUserBlocked(post.username)) continue;
+        visible.push(post);
+      }
     }
-  }, [isUserBlocked]);
+    return visible;
+  }, [feedData, isUserBlocked]);
 
-  const applyStoriesState = useCallback((stories: Story[]) => {
-    const filteredStories = stories.filter(story => !isUserBlocked(story.username));
+  // Once per failed fetch (each failure yields a new error object), and only
+  // when there is no cached feed to fall back on.
+  useEffect(() => {
+    if (!isFeedError || feedData) return;
+    console.error('Feed load error:', feedError);
+    addToast('Failed to load feed', 'error');
+  }, [isFeedError, feedError, feedData, addToast]);
+
+  // ---- Stories --------------------------------------------------------------
+  const storiesKey = useMemo(() => queryKeys.stories(viewerId ?? ''), [viewerId]);
+  // getStories() resolves [] on network errors too. Unless an empty reel is
+  // expected (pull-to-refresh, follow change), a sudden [] while cached stories
+  // are still live is treated as a failed fetch so the cached reel stays.
+  const trustEmptyStoriesUntilRef = useRef(0);
+  const trustEmptyStories = useCallback(() => {
+    trustEmptyStoriesUntilRef.current = Date.now() + TRUST_EMPTY_STORIES_MS;
+  }, []);
+  const storiesQuery = useQuery({
+    queryKey: storiesKey,
+    queryFn: async () => {
+      const stories = await getStories();
+      if (stories.length === 0 && Date.now() > trustEmptyStoriesUntilRef.current) {
+        const cached = queryClient.getQueryData<Story[]>(storiesKey) ?? [];
+        const now = Date.now();
+        if (cached.some(story => isStoryLive(story, now))) {
+          throw new Error('Stories refresh returned nothing; keeping cached stories');
+        }
+      }
+      return stories;
+    },
+    enabled: !!viewerId,
+  });
+  const { data: storiesData, refetch: refetchStories } = storiesQuery;
+
+  const followedUsernamesRef = useRef(followedUsernames);
+  useEffect(() => {
+    if (followedUsernamesRef.current === followedUsernames) return;
+    followedUsernamesRef.current = followedUsernames;
+    // Follow list changed: the stories refetch may legitimately be empty.
+    trustEmptyStories();
+  }, [followedUsernames, trustEmptyStories]);
+
+  const { storyGroups, allStories } = useMemo(() => {
+    const now = Date.now();
+    const filteredStories = (storiesData ?? []).filter(
+      story => !isUserBlocked(story.username) && isStoryLive(story, now),
+    );
     const dedupedStories = dedupeStoriesById(filteredStories);
     const currentUsername = userProfile?.username?.trim().toLowerCase();
-    const feedStories = currentUsername
-      ? dedupedStories.filter(story => story.username.trim().toLowerCase() !== currentUsername)
-      : dedupedStories;
+    const feedStories = dedupedStories.filter(story => {
+      if (viewerId && story.userId === viewerId) return false;
+      return !currentUsername || story.username?.trim().toLowerCase() !== currentUsername;
+    });
 
     const groups = new Map<string, StoryGroup>();
     feedStories.forEach(story => {
@@ -124,81 +260,150 @@ export default function HomeFeedScreen() {
       groups.get(story.username)?.stories.push(story);
     });
 
-    setStoryGroups(Array.from(groups.values()));
-    setAllStories(feedStories);
-    allStoriesRef.current = feedStories;
-  }, [isUserBlocked, userProfile?.username]);
+    return { storyGroups: Array.from(groups.values()), allStories: feedStories };
+  }, [storiesData, isUserBlocked, userProfile?.username, viewerId]);
 
-  const refreshStories = useCallback(async () => {
+  // ---- Suggestions (empty feed + following nobody) -------------------------
+  // Gated on the loaded profile (not the session id): followedUsernames arrives
+  // together with userProfile.id, so before that "follows nobody" is unknown.
+  const wantsSuggestions = !!profileId && !isLoading && posts.length === 0 && !hasFollows;
+  const suggestionsQuery = useQuery({
+    queryKey: queryKeys.suggestions(viewerId ?? ''),
+    queryFn: async () => {
+      try {
+        return await getSmartUserSuggestions(viewerId as string);
+      } catch (error) {
+        // Rethrown so a failed refresh keeps the cached suggestions.
+        console.error('Suggestion load error:', error);
+        throw error;
+      }
+    },
+    enabled: wantsSuggestions,
+  });
+  const { data: suggestionRows, refetch: refetchSuggestions } = suggestionsQuery;
+
+  const suggestedUsers = useMemo<SimpleUser[]>(() => {
+    if (!wantsSuggestions) return [];
+    return (suggestionRows || [])
+      .map((suggestion: any) => ({
+        id: suggestion.suggested_user_id || suggestion.id || suggestion.username,
+        username: suggestion.username || '',
+        name: suggestion.username || 'Ahlan user',
+        avatar: suggestion.avatar_url || null,
+        isVerified: Boolean(suggestion.is_verified),
+      }))
+      .filter((user: SimpleUser) => Boolean(user.username) && !isUserBlocked(user.username));
+  }, [wantsSuggestions, suggestionRows, isUserBlocked]);
+
+  // ---- Realtime -------------------------------------------------------------
+  // Realtime patches keep the original fetch time so they do not postpone the
+  // regular background refresh.
+  const patchQueryData = useCallback(<T,>(key: QueryKey, patch: (data: T) => T) => {
+    const current = queryClient.getQueryData<T>(key);
+    if (current === undefined) return;
+    const next = patch(current);
+    if (next === current) return;
+    queryClient.setQueryData<T>(key, next, {
+      updatedAt: queryClient.getQueryState(key)?.dataUpdatedAt,
+    });
+  }, [queryClient]);
+
+  const invalidateStories = useCallback(() => {
+    if (!viewerId) return;
+    void queryClient.invalidateQueries({ queryKey: queryKeys.stories(viewerId) });
+  }, [queryClient, viewerId]);
+
+  const handleStoryChange = useCallback((payload: any) => {
+    if (!viewerId) return;
+    if (payload?.eventType === 'DELETE') {
+      const deletedId = payload.old?.id;
+      if (!deletedId) return;
+      patchQueryData<Story[]>(queryKeys.stories(viewerId), stories => {
+        const next = stories.filter(story => story.id !== deletedId);
+        return next.length === stories.length ? stories : next;
+      });
+      return;
+    }
+    invalidateStories();
+  }, [viewerId, patchQueryData, invalidateStories]);
+
+  const handlePostUpdates = useCallback(async (payload: any) => {
+    if (!viewerId) return;
+    const key = queryKeys.feed(viewerId);
     try {
-      const stories = await getStories();
-      // Only update if we got stories OR if we had stories before (don't clear transiently)
-      if (stories.length > 0 || allStoriesRef.current.length === 0) {
-        applyStoriesState(stories);
+      if (payload.eventType === 'DELETE') {
+        const deletedId = payload.old?.id;
+        if (!deletedId) return;
+        patchQueryData<FeedData>(key, data => removeFeedPost(data, deletedId));
+        return;
+      }
+
+      if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+        const postId = payload.new?.id;
+        if (!postId) return;
+        if (payload.eventType === 'UPDATE') {
+          // Only posts already on this timeline need refreshing.
+          const cached = queryClient.getQueryData<FeedData>(key);
+          if (!cached || !feedHasPost(cached, postId)) return;
+        }
+        const fullPost = await getPostById(postId);
+        if (!fullPost || isUserBlocked(fullPost.username)) return;
+
+        if (payload.eventType === 'INSERT') {
+          // The timeline only holds followed users + me; anything else would
+          // vanish again on the next refetch.
+          const author = fullPost.username?.trim().toLowerCase();
+          const isOwnPost = payload.new?.user_id === viewerId
+            || (Boolean(author) && author === userProfile?.username?.trim().toLowerCase());
+          if (!isOwnPost && !isUserFollowed(fullPost.username)) return;
+          patchQueryData<FeedData>(key, data => prependFeedPost(data, fullPost));
+          return;
+        }
+
+        patchQueryData<FeedData>(key, data => replaceFeedPost(data, fullPost));
       }
     } catch (error) {
-      console.error('Story refresh error:', error);
+      console.error('Realtime post handling error:', error);
     }
-  }, [applyStoriesState]);
+  }, [viewerId, queryClient, isUserBlocked, isUserFollowed, userProfile?.username, patchQueryData]);
 
-  const loadFeed = useCallback(async () => {
-    try {
-      resetPageCounter();
-      const [timelinePosts, stories] = await Promise.all([
-        getTimeline(),
-        getStories(),
-      ]);
-
-      const filteredPosts = timelinePosts.filter(post => !isUserBlocked(post.username));
-      setPosts(filteredPosts);
-      setHasMore(filteredPosts.length >= FEED_PAGE_SIZE);
-      applyStoriesState(stories);
-
-      const hasFollows = followedUsernames && followedUsernames.size > 0;
-      if (filteredPosts.length === 0 && !hasFollows && userProfile?.id) {
-        await loadSuggestions(userProfile.id);
-      } else {
-        setSuggestedUsers([]);
-      }
-    } catch (error) {
-      console.error('Feed load error:', error);
-      addToast('Failed to load feed', 'error');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [isUserBlocked, addToast, followedUsernames, userProfile?.id, loadSuggestions, applyStoriesState]);
+  // Channels subscribe once per viewer and always call the latest handler.
+  const handleStoryChangeRef = useRef(handleStoryChange);
+  const handlePostUpdatesRef = useRef(handlePostUpdates);
+  useEffect(() => {
+    handleStoryChangeRef.current = handleStoryChange;
+    handlePostUpdatesRef.current = handlePostUpdates;
+  }, [handleStoryChange, handlePostUpdates]);
 
   useEffect(() => {
-    loadFeed();
-  }, [loadFeed]);
-
-  useEffect(() => {
+    if (!viewerId) return;
     const channel = supabase
       .channel(`public:stories-home-${Date.now()}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'stories' },
-        () => { void refreshStories(); },
+        payload => { handleStoryChangeRef.current(payload); },
       )
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [refreshStories]);
+  }, [viewerId]);
 
   useEffect(() => {
-    if (!userProfile?.id) return;
+    if (!viewerId) return;
     const channel = supabase
-      .channel(`public:follows-home-${userProfile.id}-${Date.now()}`)
+      .channel(`public:follows-home-${viewerId}-${Date.now()}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'follows' },
         (payload) => {
           const next = payload.new as { follower_id?: string } | null;
           const prev = payload.old as { follower_id?: string } | null;
-          if (next?.follower_id === userProfile.id || prev?.follower_id === userProfile.id) {
-            void refreshStories();
+          if (next?.follower_id === viewerId || prev?.follower_id === viewerId) {
+            trustEmptyStories();
+            invalidateStories();
           }
         },
       )
@@ -207,89 +412,52 @@ export default function HomeFeedScreen() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [userProfile?.id, refreshStories]);
+  }, [viewerId, invalidateStories, trustEmptyStories]);
 
   useEffect(() => {
-    if (!userProfile?.id || isLoading) return;
-    const hasFollows = followedUsernames && followedUsernames.size > 0;
-    if (posts.length === 0 && !hasFollows) {
-      void loadSuggestions(userProfile.id);
-    } else if (suggestedUsers.length > 0) {
-      setSuggestedUsers([]);
-    }
-  }, [followedUsernames, isLoading, loadSuggestions, posts.length, suggestedUsers.length, userProfile?.id]);
-
-  const handlePostUpdates = useCallback(async (payload: any) => {
-    try {
-      if (payload.eventType === 'DELETE') {
-        setPosts(prev => prev.filter(post => post.id !== payload.old.id));
-        return;
-      }
-
-      if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-        const postId = payload.new?.id;
-        if (!postId) return;
-        const fullPost = await getPostById(postId);
-        if (!fullPost || isUserBlocked(fullPost.username)) return;
-
-        if (payload.eventType === 'INSERT') {
-          setPosts(prev => (prev.some(post => post.id === fullPost.id) ? prev : [fullPost, ...prev]));
-          return;
-        }
-
-        setPosts(prev => prev.map(post => (post.id === fullPost.id ? fullPost : post)));
-      }
-    } catch (error) {
-      console.error('Realtime post handling error:', error);
-    }
-  }, [isUserBlocked]);
-
-  useEffect(() => {
+    if (!viewerId) return;
     const channel = supabase
       .channel(`public:posts-home-${Date.now()}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'posts' },
-        payload => { void handlePostUpdates(payload); },
+        payload => { void handlePostUpdatesRef.current(payload); },
       )
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [handlePostUpdates]);
+  }, [viewerId]);
 
+  // ---- Refresh / pagination -------------------------------------------------
   const onRefresh = useCallback(async () => {
+    if (!viewerId) return;
     setRefreshing(true);
+    trustEmptyStories();
     try {
-      await loadFeed();
+      // Like the old loadFeed(): pull-to-refresh restarts from the newest page
+      // instead of re-downloading every page scrolled so far.
+      // (patchQueryData keeps the fetch time, so a failed refresh stays stale.)
+      patchQueryData<FeedData>(feedKey, data => (data.pages.length > 1
+        ? { pages: data.pages.slice(0, 1), pageParams: data.pageParams.slice(0, 1) }
+        : data));
+      await Promise.all([
+        refetchFeed(),
+        refetchStories(),
+        wantsSuggestions ? refetchSuggestions() : Promise.resolve(),
+      ]);
     } finally {
       setRefreshing(false);
     }
-  }, [loadFeed]);
+  }, [viewerId, patchQueryData, feedKey, refetchFeed, refetchStories, refetchSuggestions, wantsSuggestions, trustEmptyStories]);
 
-  const loadMore = useCallback(async () => {
-    if (isLoadingMore || !hasMore) return;
-    setIsLoadingMore(true);
-    try {
-      const morePosts = await getMorePosts();
-      if (morePosts.length === 0) {
-        setHasMore(false);
-        return;
-      }
-
-      const filteredPosts = morePosts.filter(post => !isUserBlocked(post.username));
-      setPosts(prev => appendUniquePosts(prev, filteredPosts));
-
-      if (morePosts.length < FEED_PAGE_SIZE) {
-        setHasMore(false);
-      }
-    } catch (error) {
+  const loadMore = useCallback(() => {
+    if (!hasNextPage || isFetchingNextPage) return;
+    fetchNextPage().catch(error => {
       console.error('Load more error:', error);
-    } finally {
-      setIsLoadingMore(false);
-    }
-  }, [isLoadingMore, hasMore, isUserBlocked]);
+    });
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const handleViewProfile = useCallback((username: string) => {
     router.push(`/user/${username}`);
@@ -343,8 +511,6 @@ export default function HomeFeedScreen() {
 
   const ListEmpty = useCallback(() => {
     if (isLoading) return null;
-
-    const hasFollows = followedUsernames && followedUsernames.size > 0;
 
     return (
       <View className="items-center mt-20 px-4">
@@ -405,7 +571,7 @@ export default function HomeFeedScreen() {
         )}
       </View>
     );
-  }, [isLoading, followedUsernames, suggestedUsers, isUserFollowed, toggleFollowUser, handleViewProfile]);
+  }, [isLoading, hasFollows, suggestedUsers, isUserFollowed, toggleFollowUser, handleViewProfile]);
 
   const ListFooter = useCallback(() => {
     if (!isLoadingMore) return null;

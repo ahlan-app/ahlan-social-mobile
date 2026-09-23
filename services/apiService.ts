@@ -798,7 +798,10 @@ export interface FeedPage {
  * so cached pages stay on screen instead of being replaced by an empty list.
  */
 export const getTimelinePage = async (cursor: string | null): Promise<FeedPage> => {
-    const { data: { user } } = await supabase.auth.getUser();
+    // getSession reads the stored session (no network round trip per page).
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) throw sessionError;
+    const user = session?.user;
     if (!user) return { posts: [], nextCursor: null };
 
     const userIdsToFetch = await getFeedUserIds(user.id);
@@ -1379,8 +1382,13 @@ export const getUserProfile = async (username: string, opts: { force?: boolean }
         return profileCache.get(username)!;
     }
     const { data, error } = await supabase.from('profiles').select('*').eq('username', username).single();
-    if (error || !data) {
+    if (error && error.code !== 'PGRST116') {
+        // Network / server errors throw so cached profiles are kept; only a
+        // missing row means "this user does not exist".
         console.error("Error fetching profile", error);
+        throw error;
+    }
+    if (!data) {
         return null;
     }
     const profile: UserProfile = {
@@ -1398,7 +1406,7 @@ export const getUserProfile = async (username: string, opts: { force?: boolean }
 
 export const prefetchUserProfile = (username: string) => {
     if (!profileCache.has(username)) {
-        getUserProfile(username);
+        getUserProfile(username).catch(() => {});
     }
 };
 
@@ -1747,7 +1755,7 @@ export async function addComment(postId: string, userId: string, content: string
   const { data, error } = await supabase
     .from('comments')
     .insert([{ post_id: postId, user_id: userId, content }])
-    .select('*, profiles!user_id(username, avatar_url)')
+    .select('*, profiles!user_id(username, avatar_url, is_verified)')
     .single();
 
   if (error) {
@@ -1791,9 +1799,13 @@ export const deleteComment = async (commentId: string): Promise<void> => {
         .select('id');
 
     if (error) {
+        if (error.code === '23503') throw new Error('This comment could not be deleted right now.');
         throw error;
     }
     if (!data || data.length === 0) {
+        // Already gone (deleted elsewhere) counts as success; otherwise RLS refused.
+        const { data: stillThere } = await supabase.from('comments').select('id').eq('id', commentId).maybeSingle();
+        if (!stillThere) return;
         throw new Error('You can only delete your own comments or comments on your posts.');
     }
 };

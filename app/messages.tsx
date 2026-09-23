@@ -29,7 +29,9 @@ import {
 import { Image } from 'expo-image';
 import { Stack, useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApp } from '../store/AppContext.native';
+import { queryKeys } from '../services/queryKeys';
 import {
   getChatListUsers,
   getUserProfile,
@@ -46,6 +48,8 @@ import UserAvatar from '../components/native/UserAvatar';
 import RenderUserContent from '../components/native/RenderUserContent';
 import { SearchIcon, VerifiedIcon, CheckIcon, DoubleCheckIcon, ArrowLeftIcon } from '../components/native/Icons';
 import type { Message, Post, SimpleUser, Story } from '../types';
+
+const EMPTY_USERS: SimpleUser[] = [];
 
 // ─── Message Status ───────────────────────────
 
@@ -122,8 +126,26 @@ export default function MessagesScreen() {
   const params = useLocalSearchParams<{ chatWith?: string }>();
   const { userProfile, addToast, markAllMessagesAsRead, markChatAsRead, unreadChats, triggerHapticFeedback, isUserBlocked, isUserIdBlocked } = useApp();
 
-  const [chatUsers, setChatUsers] = useState<SimpleUser[]>([]);
-  const [isLoadingUsers, setIsLoadingUsers] = useState(true);
+  const queryClient = useQueryClient();
+  const viewerId = userProfile?.id || '';
+
+  // Chat list: cached in memory by TanStack Query (never written to disk), so
+  // reopening the screen shows the last list instantly while it refreshes.
+  const chatListQuery = useQuery({
+    queryKey: queryKeys.chatList(viewerId),
+    queryFn: () => getChatListUsers(viewerId),
+    enabled: !!viewerId,
+    refetchOnMount: 'always',
+  });
+  const chatUsers = chatListQuery.data ?? EMPTY_USERS;
+  const isLoadingUsers = !!viewerId && chatListQuery.isPending && !chatListQuery.data;
+
+  /** A message was sent/received in the open chat: the list order changed. */
+  const markChatListStale = useCallback(() => {
+    if (!viewerId) return;
+    void queryClient.invalidateQueries({ queryKey: queryKeys.chatList(viewerId), refetchType: 'none' });
+  }, [queryClient, viewerId]);
+
   const [chatWith, setChatWith] = useState<SimpleUser | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -157,28 +179,33 @@ export default function MessagesScreen() {
     }
   }, [userProfile?.id, params.chatWith]);
 
-  // Load chat list
+  // A realtime message from a new sender (tracked by AppContext as an unread
+  // chat) means the chat list changed: refresh it.
+  const seenUnreadChatsRef = useRef<Set<string> | null>(null);
   useEffect(() => {
-    const fetchUsers = async () => {
-      if (!userProfile?.id) { setIsLoadingUsers(false); return; }
-      setIsLoadingUsers(true);
-      try {
-        const users = await getChatListUsers(userProfile.id);
-        setChatUsers(users);
-      } catch (err) {
-        console.error('Could not fetch chat users', err);
-      } finally {
-        setIsLoadingUsers(false);
-      }
-    };
-    fetchUsers();
-  }, [userProfile?.id]);
+    const previous = seenUnreadChatsRef.current;
+    seenUnreadChatsRef.current = unreadChats;
+    if (!previous || !viewerId) return;
+    let hasNewSender = false;
+    unreadChats.forEach(id => {
+      if (!previous.has(id)) hasNewSender = true;
+    });
+    if (hasNewSender) {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.chatList(viewerId) });
+    }
+  }, [unreadChats, viewerId, queryClient]);
 
   // Open chat from params (e.g. from profile "Message" button)
   useEffect(() => {
     if (!params.chatWith) return;
     const findAndOpen = async () => {
-      const profile = await getUserProfile(params.chatWith!);
+      let profile: Awaited<ReturnType<typeof getUserProfile>> = null;
+      try {
+        profile = await getUserProfile(params.chatWith!);
+      } catch {
+        addToast('Could not open this chat. Check your connection and try again.', 'error');
+        return;
+      }
       if (profile && (isUserIdBlocked(profile.id) || isUserBlocked(profile.username))) {
         addToast("This account isn't available.", 'error');
       } else if (profile) {
@@ -329,6 +356,7 @@ export default function MessagesScreen() {
                 return [...prev, hydrated];
               });
             };
+            markChatListStale();
             hydrateAndSet();
           }
         },
@@ -336,12 +364,16 @@ export default function MessagesScreen() {
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [chatWith?.id, userProfile?.id]);
+  }, [chatWith?.id, userProfile?.id, markChatListStale]);
 
   const closeChat = () => {
     setChatWith(null);
     setReplyingTo(null);
     setMessages([]);
+    // Back on the list: refresh it if messages were exchanged meanwhile.
+    if (viewerId) {
+      void queryClient.refetchQueries({ queryKey: queryKeys.chatList(viewerId), stale: true });
+    }
   };
 
   const handleSendMessage = async () => {
@@ -378,6 +410,7 @@ export default function MessagesScreen() {
         reply_to,
       });
       setMessages(prev => prev.map(msg => msg.id === tempId ? { ...msg, ...data, repliedMessage: optimistic.repliedMessage } : msg));
+      markChatListStale();
     } catch (error) {
       console.error('Error sending message:', error);
       addToast('Failed to send message.', 'error');
@@ -388,20 +421,24 @@ export default function MessagesScreen() {
   const handleDeleteChat = async () => {
     if (!userToDelete || !userProfile?.id) return;
     const userId = userToDelete.id;
+    const chatListKey = queryKeys.chatList(userProfile.id);
     setUserToDelete(null);
-    setChatUsers(prev => prev.filter(u => u.id !== userId));
+    // Cancel before writing: an in-flight refetch could still contain the chat.
+    void queryClient.cancelQueries({ queryKey: chatListKey });
+    queryClient.setQueryData<SimpleUser[]>(chatListKey, prev => prev?.filter(u => u.id !== userId));
     addToast('Conversation deleted.', 'info');
 
     try {
       const success = await deleteConversationForBothSides(userProfile.id, userId);
       if (!success) {
         addToast('Failed to delete conversation.', 'error');
-        const users = await getChatListUsers(userProfile.id);
-        setChatUsers(users);
       }
     } catch (error) {
       console.error('Failed to delete chat:', error);
       addToast('Could not delete chat.', 'error');
+    } finally {
+      // Re-sync with the server (restores the chat if the delete failed).
+      void queryClient.invalidateQueries({ queryKey: chatListKey });
     }
   };
 

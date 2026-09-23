@@ -28,7 +28,9 @@ import {
     withLegacyUsernames,
 } from '../services/blockRelations';
 import { supabase } from '../services/supabase.native';
+import { queryKeys } from '../services/queryKeys';
 import {
+    queryClient,
     clearQueryCache,
     invalidateAfterBlockChange,
     invalidateAfterFollowChange,
@@ -76,7 +78,7 @@ interface AppContextType extends AppState {
     isPostSaved: (postId: string) => boolean;
     postComment: (postId: string, content: string) => Promise<void>;
     getComments: (postId: string) => Comment[];
-    setComments: (postId: string, comments: Comment[]) => void;
+    setComments: (postId: string, comments: Comment[] | ((prev: Comment[]) => Comment[])) => void;
     areCommentsLoaded: (postId: string) => boolean;
     addProfilePost: (post: Post) => void;
     deleteProfilePost: (postId: string) => void;
@@ -281,6 +283,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                         const oldMessage = payload.old as any;
 
                         if (payload.eventType === 'INSERT') {
+                            if (newMessage?.receiver_id === userId || newMessage?.sender_id === userId) {
+                                // Chat list order / last message changed.
+                                void queryClient.invalidateQueries({ queryKey: queryKeys.chatList(userId) });
+                            }
                             // Yeni mesaj geldi
                             if (newMessage.receiver_id === userId) {
                                 setState(prev => {
@@ -465,6 +471,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     useEffect(() => {
         const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
             if (session?.user && (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'USER_UPDATED')) {
+                // Seed the viewer id from the stored session right away so screens can
+                // render their persisted query cache before the full sync finishes.
+                const sessionUser = session.user;
+                setState(prevState => (prevState.userProfile.id === sessionUser.id ? prevState : {
+                    ...prevState,
+                    userProfile: {
+                        ...prevState.userProfile,
+                        id: sessionUser.id,
+                        username: sessionUser.user_metadata?.username || prevState.userProfile.username,
+                        name: sessionUser.user_metadata?.full_name || prevState.userProfile.name,
+                    },
+                }));
                 await syncUserData(session.user);
             } else if (event === 'SIGNED_OUT') {
                 // Cached feeds, profiles and lists belong to the old account.
@@ -585,6 +603,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
         try {
             await apiToggleRepost(postId, user.id);
+            void queryClient.invalidateQueries({ queryKey: queryKeys.userReposts(user.id) });
         } catch (error) {
             console.error("Failed to toggle repost:", error);
             addToast('Failed to update repost status.', 'error');
@@ -627,6 +646,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
         try {
             await apiToggleSavePost(postId, user.id);
+            void queryClient.invalidateQueries({ queryKey: queryKeys.savedPosts(user.id) });
         } catch (error) {
             console.error("Failed to toggle save:", error);
             addToast('Failed to update saved status.', 'error');
@@ -658,6 +678,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             userId: user.id,
             username: state.userProfile.username,
             avatar: state.userProfile.profilePicture,
+            isVerified: state.userProfile.isVerified,
             text: content,
             timestamp: new Date(),
             likes: 0,
@@ -680,8 +701,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             const realComment: Comment = {
                 id: newCommentData.id,
                 userId: newCommentData.user_id,
-                username: newCommentData.profiles.username,
-                avatar: newCommentData.profiles.avatar_url,
+                username: newCommentData.profiles?.username ?? state.userProfile.username,
+                avatar: newCommentData.profiles?.avatar_url ?? state.userProfile.profilePicture,
+                isVerified: Boolean(newCommentData.profiles?.is_verified),
                 text: newCommentData.content,
                 timestamp: new Date(newCommentData.created_at),
                 likes: 0,
@@ -709,15 +731,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 return { ...prevState, postComments: newPostComments };
             });
         }
-    }, [addToast, state.userProfile.username, state.userProfile.profilePicture]);
+    }, [addToast, state.userProfile.username, state.userProfile.profilePicture, state.userProfile.isVerified]);
 
     const getComments = useCallback((postId: string) => state.postComments.get(postId) || [], [state.postComments]);
 
-    const setComments = useCallback((postId: string, comments: Comment[]) => {
+    /** Replaces a post's comments, or updates them from the latest list (updater). */
+    const setComments = useCallback((postId: string, comments: Comment[] | ((prev: Comment[]) => Comment[])) => {
         // FIX: Explicitly typed `prevState` as AppState.
         setState((prevState: AppState) => {
             const newPostComments = new Map(prevState.postComments);
-            newPostComments.set(postId, comments);
+            const current = newPostComments.get(postId) || [];
+            newPostComments.set(postId, typeof comments === 'function' ? comments(current) : comments);
             return { ...prevState, postComments: newPostComments };
         });
     }, []);
@@ -776,7 +800,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 addToast("Could not delete post.", "error");
             })
             : Promise.resolve(deletePost(postId));
-        request.finally(() => { void invalidateAfterPostChange(state.userProfile.id); });
+        request.finally(() => { void invalidateAfterPostChange(state.userProfile.id, postId); });
     }, [state.isAdmin, state.userProfile.id, addToast]);
 
      const updateProfilePost = useCallback((updatedPost: Post) => {
@@ -786,7 +810,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             ...prevState,
             profilePosts: prevState.profilePosts.map(p => p.id === updatedPost.id ? updatedPost : p),
         }));
-        Promise.resolve(updatePost(updatedPost)).finally(() => { void invalidateAfterPostChange(state.userProfile.id); });
+        Promise.resolve(updatePost(updatedPost)).finally(() => { void invalidateAfterPostChange(state.userProfile.id, updatedPost.id); });
     }, [state.userProfile.id]);
 
     const setProfilePosts = useCallback((posts: Post[]) => {

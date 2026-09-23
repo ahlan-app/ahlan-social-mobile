@@ -183,7 +183,7 @@ const persistOptions = {
   persister: queryPersister,
   maxAge: QUERY_CACHE_MAX_AGE,
   buster: Constants.expoConfig?.version ?? 'dev',
-  dehydrateOptions: { shouldDehydrateQuery: shouldPersistQuery },
+  dehydrateOptions: { shouldDehydrateQuery: shouldPersistQuery, shouldDehydrateMutation: () => false },
 };
 
 export default function RootLayout() {

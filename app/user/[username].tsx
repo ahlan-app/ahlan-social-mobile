@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -28,6 +28,7 @@ import {
 import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApp } from '../../store/AppContext.native';
 import {
   getUserProfile,
@@ -38,6 +39,8 @@ import {
   setUserVerified,
   reportUser,
 } from '../../services/apiService';
+import { queryKeys } from '../../services/queryKeys';
+import { QUERY_STALE_TIME } from '../../services/queryClient';
 import { supabase } from '../../services/supabase.native';
 import UserAvatar from '../../components/native/UserAvatar';
 import RenderUserContent from '../../components/native/RenderUserContent';
@@ -51,6 +54,17 @@ const screenWidth = Dimensions.get('window').width;
 const tileSize = (screenWidth - GRID_GAP * (NUM_COLUMNS - 1)) / NUM_COLUMNS;
 
 type TabType = 'posts' | 'reposts';
+
+/** Cached under queryKeys.followCounts(userId); shared with the profile tab. */
+type FollowCounts = { followers: number; following: number };
+
+const fetchFollowCounts = async (userId: string): Promise<FollowCounts> => {
+  const [followers, following] = await Promise.all([
+    getFollowerCount(userId),
+    getFollowingCount(userId),
+  ]);
+  return { followers, following };
+};
 
 const GridTile: React.FC<{ post: Post; onPress: () => void }> = React.memo(({ post, onPress }) => {
   const isTextPost = post.media_type === 'text' || !post.media;
@@ -92,9 +106,13 @@ const REPORT_REASONS = [
 
 const EMPTY_POSTS: Post[] = [];
 
+const markVerified = (list: Post[] | undefined, username: string, isVerified: boolean) =>
+  list?.map(p => (p.username === username ? { ...p, isVerified } : p));
+
 export default function UserProfileScreen() {
   const { username } = useLocalSearchParams<{ username: string }>();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const {
     userProfile: myProfile,
     isUserFollowed,
@@ -105,14 +123,9 @@ export default function UserProfileScreen() {
     toggleBlockUser,
     addToast,
     isAdmin,
+    isUserBlocked,
   } = useApp();
 
-  const [profile, setProfile] = useState<UserProfileType | null>(null);
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [reposts, setReposts] = useState<Post[]>([]);
-  const [followerCount, setFollowerCount] = useState(0);
-  const [followingCount, setFollowingCount] = useState(0);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>('posts');
   const [menuVisible, setMenuVisible] = useState(false);
@@ -131,121 +144,156 @@ export default function UserProfileScreen() {
     return () => { mountedRef.current = false; };
   }, []);
 
-  const fetchData = useCallback(async (force = false) => {
-    if (!username) return;
-    // Learn about blocks made by the other side as soon as the profile opens.
-    void refreshBlockRelations();
-    try {
-      const profileData = await getUserProfile(username, { force });
-      if (!mountedRef.current) return;
-      setProfile(profileData);
-      if (profileData) {
-        const [userPosts, userReposts, followers, following] = await Promise.all([
-          getUserPosts(profileData.id),
-          getUserReposts(profileData.id),
-          getFollowerCount(profileData.id),
-          getFollowingCount(profileData.id),
-        ]);
-        if (!mountedRef.current) return;
-        setPosts(userPosts);
-        setReposts(userReposts);
-        setFollowerCount(followers);
-        setFollowingCount(following);
-      }
-    } catch (error) {
-      console.error('Failed to load user profile', error);
-    } finally {
-      if (mountedRef.current) setLoading(false);
-    }
-  }, [username, refreshBlockRelations]);
+  // ─── Cached queries ────────────────────────────
+  // Cached data (memory or disk) renders instantly; stale data is refreshed
+  // in the background. Block filtering happens at render time below.
 
+  const profileQuery = useQuery({
+    queryKey: queryKeys.profile(username || ''),
+    queryFn: async (): Promise<UserProfileType | null> => {
+      const fresh = await getUserProfile(username as string, { force: true });
+      if (fresh) return fresh;
+      // getUserProfile also resolves null on network errors: keep a profile we
+      // already know instead of replacing it with "not found".
+      if (queryClient.getQueryData<UserProfileType | null>(queryKeys.profile(username as string))) {
+        throw new Error('Could not refresh this profile.');
+      }
+      return null;
+    },
+    enabled: !!username,
+    // A "not found" result is never fresh: getUserProfile also returns null on
+    // network errors, so re-check on every visit instead of for 5 minutes.
+    staleTime: query => (query.state.data ? QUERY_STALE_TIME : 0),
+  });
+  const profile = profileQuery.data ?? null;
+  const profileId = profile?.id;
+
+  // Posts are hidden while either side has a block, so don't fetch them.
+  const canLoadPosts = !!profileId && !isBlocked && !blockedMe;
+  const postsQuery = useQuery({
+    queryKey: queryKeys.userPosts(profileId || ''),
+    queryFn: () => getUserPosts(profileId as string),
+    enabled: canLoadPosts,
+  });
+  const repostsQuery = useQuery({
+    queryKey: queryKeys.userReposts(profileId || ''),
+    queryFn: () => getUserReposts(profileId as string),
+    enabled: canLoadPosts,
+  });
+  const countsQuery = useQuery({
+    queryKey: queryKeys.followCounts(profileId || ''),
+    queryFn: () => fetchFollowCounts(profileId as string),
+    enabled: !!profileId && !blockedMe,
+  });
+
+  const posts = postsQuery.data ?? EMPTY_POSTS;
+  // Their reposts can include accounts blocked in either direction: hide
+  // those at render time so a block change applies without a refetch.
+  const reposts = useMemo(
+    () => (repostsQuery.data ?? EMPTY_POSTS).filter(p => !isUserBlocked(p.username)),
+    [repostsQuery.data, isUserBlocked],
+  );
+  const followerCount = countsQuery.data?.followers ?? 0;
+  const followingCount = countsQuery.data?.following ?? 0;
+
+  // Learn about blocks made by the other side as soon as the profile opens.
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    if (username) void refreshBlockRelations();
+  }, [username, refreshBlockRelations]);
 
   // Realtime follow count updates
   useEffect(() => {
-    if (!profile?.id) return;
+    if (!profileId) return;
+    const countsKey = queryKeys.followCounts(profileId);
     const channel = supabase
-      .channel(`user-profile-follows-${profile.id}-${Date.now()}`)
+      .channel(`user-profile-follows-${profileId}-${Date.now()}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'follows' },
-        async (payload) => {
+        (payload) => {
           const f = payload.new as any;
           const o = payload.old as any;
           if (
-            f?.follower_id === profile.id || f?.followed_id === profile.id ||
-            o?.follower_id === profile.id || o?.followed_id === profile.id
+            f?.follower_id === profileId || f?.followed_id === profileId ||
+            o?.follower_id === profileId || o?.followed_id === profileId
           ) {
-            const [followers, following] = await Promise.all([
-              getFollowerCount(profile.id),
-              getFollowingCount(profile.id),
-            ]);
-            setFollowerCount(followers);
-            setFollowingCount(following);
+            void queryClient.invalidateQueries({ queryKey: countsKey });
           }
         },
       )
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [profile?.id]);
+  }, [profileId, queryClient]);
+
+  const { refetch: refetchProfile } = profileQuery;
+  const { refetch: refetchPosts } = postsQuery;
+  const { refetch: refetchReposts } = repostsQuery;
+  const { refetch: refetchCounts } = countsQuery;
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchData(true);
-    setRefreshing(false);
-  }, [fetchData]);
+    try {
+      void refreshBlockRelations();
+      await Promise.all([
+        refetchProfile(),
+        canLoadPosts ? refetchPosts() : null,
+        canLoadPosts ? refetchReposts() : null,
+        profileId && !blockedMe ? refetchCounts() : null,
+      ]);
+    } finally {
+      if (mountedRef.current) setRefreshing(false);
+    }
+  }, [refreshBlockRelations, refetchProfile, refetchPosts, refetchReposts, refetchCounts, canLoadPosts, profileId, blockedMe]);
 
   const handleToggleFollow = useCallback(async () => {
-    if (!username || !profile?.id || isMyProfile || followPending || isBlocked || blockedMe) return;
+    if (!username || !profileId || isMyProfile || followPending || isBlocked || blockedMe) return;
     const wasFollowing = isFollowing;
+    const countsKey = queryKeys.followCounts(profileId);
 
     setFollowPending(true);
-    setFollowerCount(prev => Math.max(0, prev + (wasFollowing ? -1 : 1)));
+    // Optimistic follower count; an in-flight fetch must not overwrite it.
+    await queryClient.cancelQueries({ queryKey: countsKey });
+    queryClient.setQueryData<FollowCounts>(countsKey, prev => (
+      prev ? { ...prev, followers: Math.max(0, prev.followers + (wasFollowing ? -1 : 1)) } : prev
+    ));
 
     try {
       await toggleFollowUser(username);
-      const [followers, following] = await Promise.all([
-        getFollowerCount(profile.id),
-        getFollowingCount(profile.id),
-      ]);
-      setFollowerCount(followers);
-      setFollowingCount(following);
     } finally {
-      setFollowPending(false);
+      // Resolves once the real counts are back (never rejects).
+      await queryClient.invalidateQueries({ queryKey: countsKey });
+      if (mountedRef.current) setFollowPending(false);
     }
-  }, [username, profile?.id, isMyProfile, followPending, isBlocked, blockedMe, isFollowing, toggleFollowUser]);
+  }, [username, profileId, isMyProfile, followPending, isBlocked, blockedMe, isFollowing, toggleFollowUser, queryClient]);
 
   const runToggleBlock = useCallback(async (nextBlocked: boolean) => {
     if (!profile?.id || blockPending) return;
+    const { id, username: targetName } = profile;
     setBlockPending(true);
     try {
-      const ok = await toggleBlockUser(profile.username, profile.id);
+      const ok = await toggleBlockUser(targetName, id);
       if (!ok || !mountedRef.current) return;
       addToast(
-        `@${profile.username} has been ${nextBlocked ? 'blocked' : 'unblocked'}.`,
+        `@${targetName} has been ${nextBlocked ? 'blocked' : 'unblocked'}.`,
         nextBlocked ? 'info' : 'success',
       );
+      // Blocked posts are hidden at render time (data = EMPTY_POSTS), so the
+      // cached lists are kept; after an unblock they are refetched.
       if (nextBlocked) {
-        setPosts([]);
-        setReposts([]);
         setActiveTab('posts');
       } else {
-        await fetchData(true);
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: queryKeys.profile(username || targetName) }),
+          queryClient.invalidateQueries({ queryKey: queryKeys.userPosts(id) }),
+          queryClient.invalidateQueries({ queryKey: queryKeys.userReposts(id) }),
+        ]);
       }
-      const [followers, following] = await Promise.all([
-        getFollowerCount(profile.id),
-        getFollowingCount(profile.id),
-      ]);
-      if (mountedRef.current) {
-        setFollowerCount(followers);
-        setFollowingCount(following);
-      }
+      // The server removed follows in both directions.
+      await queryClient.invalidateQueries({ queryKey: queryKeys.followCounts(id) });
     } finally {
       if (mountedRef.current) setBlockPending(false);
     }
-  }, [profile?.id, profile?.username, blockPending, toggleBlockUser, addToast, fetchData]);
+  }, [profile, username, blockPending, toggleBlockUser, addToast, queryClient]);
 
   const handleBlockToggle = () => {
     setMenuVisible(false);
@@ -284,21 +332,40 @@ export default function UserProfileScreen() {
   // The badge only changes after the server confirms it, so it never flips back.
   const applyVerify = useCallback(async (next: boolean) => {
     if (!profile) return;
+    const { id, username: targetName } = profile;
+    const keys = {
+      profile: queryKeys.profile(username || targetName),
+      posts: queryKeys.userPosts(id),
+      reposts: queryKeys.userReposts(id),
+    };
     setVerifyPending(true);
     try {
-      const stored = await setUserVerified(profile.id, profile.username, next);
-      setProfile(prev => (prev ? { ...prev, isVerified: stored } : prev));
-      setPosts(prev => prev.map(p => (p.username === profile.username ? { ...p, isVerified: stored } : p)));
+      const stored = await setUserVerified(id, targetName, next);
+      // Write the confirmed value into the caches (not local state). A fetch
+      // that started before the change would bring the old badge back, so
+      // cancel those first.
+      await Promise.all(Object.values(keys).map(queryKey => queryClient.cancelQueries({ queryKey })));
+      queryClient.setQueryData<UserProfileType | null>(keys.profile, prev => (
+        prev ? { ...prev, isVerified: stored } : prev
+      ));
+      queryClient.setQueryData<Post[]>(keys.posts, prev => markVerified(prev, targetName, stored));
+      queryClient.setQueryData<Post[]>(keys.reposts, prev => markVerified(prev, targetName, stored));
+      // Then refetch in the background (the server already stores the new
+      // value, so the badge cannot flip back): this restarts a first load the
+      // cancel above interrupted — it would otherwise stay pending with no
+      // fetch — and updates the badge on every other cached screen (feed,
+      // post detail, comments, search, user lists).
+      void queryClient.invalidateQueries();
       addToast(
-        stored ? `@${profile.username} now has the blue badge.` : `Blue badge removed from @${profile.username}.`,
+        stored ? `@${targetName} now has the blue badge.` : `Blue badge removed from @${targetName}.`,
         'success',
       );
     } catch (error) {
       addToast((error as Error)?.message || 'Error updating verification status.', 'error');
     } finally {
-      setVerifyPending(false);
+      if (mountedRef.current) setVerifyPending(false);
     }
-  }, [profile, addToast]);
+  }, [profile, username, addToast, queryClient]);
 
   const handleToggleVerify = () => {
     if (!profile || verifyPending) return;
@@ -318,9 +385,10 @@ export default function UserProfileScreen() {
   }, [router]);
 
   const currentData = activeTab === 'posts' ? posts : reposts;
-  const renderItem = ({ item }: { item: Post }) => (
+  const currentLoading = (activeTab === 'posts' ? postsQuery : repostsQuery).isPending;
+  const renderItem = useCallback(({ item }: { item: Post }) => (
     <GridTile post={item} onPress={() => handlePostPress(item)} />
-  );
+  ), [handlePostPress]);
   const emptyMessage = activeTab === 'posts' ? 'No posts yet.' : 'No reposts yet.';
 
   // The other user blocked me: behave as if the account does not exist.
@@ -343,8 +411,9 @@ export default function UserProfileScreen() {
     );
   }
 
-  // Loading state
-  if (loading && !profile) {
+  // Loading state: only when no profile is cached yet (also while re-checking
+  // a cached "not found", which is never trusted without a fresh fetch).
+  if (!profile && (profileQuery.isPending || profileQuery.isFetching)) {
     return (
       <SafeAreaView className="flex-1 bg-black">
         <Stack.Screen
@@ -363,7 +432,30 @@ export default function UserProfileScreen() {
     );
   }
 
-  // Not found
+  // First load failed and nothing is cached
+  if (profileQuery.isError && !profile) {
+    return (
+      <SafeAreaView className="flex-1 bg-black">
+        <Stack.Screen
+          options={{
+            headerShown: true,
+            title: `@${username}`,
+            headerStyle: { backgroundColor: '#000' },
+            headerTintColor: '#fff',
+            headerTitleStyle: { fontWeight: 'bold' },
+          }}
+        />
+        <View className="flex-1 justify-center items-center px-8">
+          <Text className="text-gray-400 text-lg text-center">Couldn't load this profile.</Text>
+          <Pressable onPress={() => { void refetchProfile(); }} className="mt-4 bg-gray-800 px-5 py-2 rounded-full">
+            <Text className="text-white font-semibold">Try again</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Not found (the query succeeded with no profile)
   if (!profile) {
     return (
       <SafeAreaView className="flex-1 bg-black">
@@ -383,7 +475,9 @@ export default function UserProfileScreen() {
     );
   }
 
-  const ProfileHeader = () => (
+  // An element (not a component defined in render), so the header is not
+  // remounted every time a background refresh re-renders the screen.
+  const profileHeader = (
     <View>
       {/* Stats */}
       <View className="p-4">
@@ -391,7 +485,7 @@ export default function UserProfileScreen() {
           <UserAvatar username={profile.username} avatarUrl={profile.profilePicture} size={80} />
           <View className="flex-1 flex-row justify-around ml-4">
             <View className="items-center">
-              <Text className="text-white font-bold text-lg">{posts.length}</Text>
+              <Text className="text-white font-bold text-lg">{isBlocked ? 0 : posts.length}</Text>
               <Text className="text-gray-500 text-sm">Posts</Text>
             </View>
             <Pressable
@@ -527,9 +621,9 @@ export default function UserProfileScreen() {
         renderItem={renderItem}
         keyExtractor={item => item.id}
         numColumns={NUM_COLUMNS}
-        ListHeaderComponent={ProfileHeader}
+        ListHeaderComponent={profileHeader}
         ListEmptyComponent={
-          isBlocked ? null : loading ? (
+          isBlocked ? null : currentLoading ? (
             <View className="py-4">
               <PostSkeleton />
               <PostSkeleton />

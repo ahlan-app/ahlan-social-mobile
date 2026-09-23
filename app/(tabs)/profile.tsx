@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -25,6 +25,7 @@ import {
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApp } from '../../store/AppContext.native';
 import {
   getUserPosts,
@@ -33,6 +34,7 @@ import {
   getFollowerCount,
   getFollowingCount,
 } from '../../services/apiService';
+import { queryKeys } from '../../services/queryKeys';
 import { supabase } from '../../services/supabase.native';
 import UserAvatar from '../../components/native/UserAvatar';
 import RenderUserContent from '../../components/native/RenderUserContent';
@@ -46,6 +48,28 @@ const screenWidth = Dimensions.get('window').width;
 const tileSize = (screenWidth - GRID_GAP * (NUM_COLUMNS - 1)) / NUM_COLUMNS;
 
 type TabType = 'posts' | 'reposts' | 'saved';
+
+/** Same shape/key as app/user/[username].tsx, so both screens share the cache. */
+type FollowCounts = { followers: number; following: number };
+
+const EMPTY_POSTS: Post[] = [];
+
+// Saved posts are private to the viewer; queryKeys has no entry for them yet.
+const savedPostsKey = queryKeys.savedPosts;
+
+const fetchFollowCounts = async (userId: string): Promise<FollowCounts> => {
+  const [followers, following] = await Promise.all([
+    getFollowerCount(userId),
+    getFollowingCount(userId),
+  ]);
+  return { followers, following };
+};
+
+/** Delay before refetching the saved/reposts tabs after an optimistic toggle. */
+const LIST_REFRESH_DELAY_MS = 1500;
+
+/** Stable fingerprint of a Set of ids, so effects run only on real changes. */
+const setSignature = (ids: Set<string>) => Array.from(ids).sort().join(',');
 
 // ─── Grid Tile ───────────────────────────────────
 
@@ -78,109 +102,184 @@ const GridTile: React.FC<{ post: Post; onPress: () => void }> = React.memo(({ po
 // ─── Profile Screen ──────────────────────────────
 
 export default function ProfileScreen() {
-  const { userProfile, refreshAllData, addToast, followedUsernames } = useApp();
+  const {
+    userProfile,
+    refreshAllData,
+    addToast,
+    followedUsernames,
+    savedPosts: savedPostIds,
+    repostedPosts: repostedPostIds,
+    isUserBlocked,
+  } = useApp();
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const myId = userProfile?.id || '';
 
   const [activeTab, setActiveTab] = useState<TabType>('posts');
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [reposts, setReposts] = useState<Post[]>([]);
-  const [savedPosts, setSavedPosts] = useState<Post[]>([]);
-  const [followerCount, setFollowerCount] = useState(0);
-  const [followingCount, setFollowingCount] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchAll = useCallback(async () => {
-    if (!userProfile?.id) return;
-    try {
-      const [userPosts, userReposts, userSaved, followers, following] = await Promise.all([
-        getUserPosts(userProfile.id),
-        getUserReposts(userProfile.id),
-        getSavedPosts(userProfile.id),
-        getFollowerCount(userProfile.id),
-        getFollowingCount(userProfile.id),
-      ]);
-      setPosts(userPosts);
-      setReposts(userReposts);
-      setSavedPosts(userSaved);
-      setFollowerCount(followers);
-      setFollowingCount(following);
-    } catch (error) {
-      console.error('Profile fetch error:', error);
-      addToast('Failed to load profile data', 'error');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [userProfile?.id]);
+  // ─── Cached queries (shared keys with app/user/[username].tsx) ──
 
-  useEffect(() => {
-    fetchAll();
-  }, [fetchAll]);
+  const postsQuery = useQuery({
+    queryKey: queryKeys.userPosts(myId),
+    queryFn: () => getUserPosts(myId),
+    enabled: !!myId,
+  });
+  const repostsQuery = useQuery({
+    queryKey: queryKeys.userReposts(myId),
+    queryFn: () => getUserReposts(myId),
+    enabled: !!myId,
+  });
+  const savedQuery = useQuery({
+    queryKey: savedPostsKey(myId),
+    queryFn: () => getSavedPosts(myId),
+    enabled: !!myId,
+  });
+  const countsQuery = useQuery({
+    queryKey: queryKeys.followCounts(myId),
+    queryFn: () => fetchFollowCounts(myId),
+    enabled: !!myId,
+  });
 
+  const posts = postsQuery.data ?? EMPTY_POSTS;
+  // Posts by blocked accounts (either direction) are hidden at render time,
+  // so a block change applies instantly without a refetch.
+  const reposts = useMemo(
+    () => (repostsQuery.data ?? EMPTY_POSTS).filter(p => !isUserBlocked(p.username)),
+    [repostsQuery.data, isUserBlocked],
+  );
+  const savedPosts = useMemo(
+    () => (savedQuery.data ?? EMPTY_POSTS).filter(p => !isUserBlocked(p.username)),
+    [savedQuery.data, isUserBlocked],
+  );
+  const followerCount = countsQuery.data?.followers ?? 0;
+  const followingCount = countsQuery.data?.following ?? 0;
+
+  const anyError = postsQuery.isError || repostsQuery.isError || savedQuery.isError || countsQuery.isError;
+  const addToastRef = useRef(addToast);
+  addToastRef.current = addToast;
   useEffect(() => {
-    setFollowingCount(followedUsernames.size);
-  }, [followedUsernames]);
+    // Once when an error appears, not on every re-render.
+    if (anyError) addToastRef.current('Failed to load profile data', 'error');
+  }, [anyError]);
+
+  // Following count follows my follow/unfollow actions instantly; the server
+  // count comes back through the followCounts invalidation in AppContext.
+  const seenFollowedRef = useRef(followedUsernames);
+  useEffect(() => {
+    if (seenFollowedRef.current === followedUsernames) return;
+    seenFollowedRef.current = followedUsernames;
+    if (!myId) return;
+    queryClient.setQueryData<FollowCounts>(queryKeys.followCounts(myId), prev => (
+      prev ? { ...prev, following: followedUsernames.size } : prev
+    ));
+  }, [followedUsernames, myId, queryClient]);
+
+  // Saving/unsaving or reposting elsewhere changes those tabs: refetch them.
+  // Those toggles are optimistic, so wait for the server write to land first.
+  const savedSignature = useMemo(() => setSignature(savedPostIds), [savedPostIds]);
+  const repostedSignature = useMemo(() => setSignature(repostedPostIds), [repostedPostIds]);
+  const seenSavedRef = useRef(savedSignature);
+  const seenRepostedRef = useRef(repostedSignature);
+  useEffect(() => {
+    if (seenSavedRef.current === savedSignature) return;
+    seenSavedRef.current = savedSignature;
+    if (!myId) return;
+    const timer = setTimeout(() => {
+      void queryClient.invalidateQueries({ queryKey: savedPostsKey(myId) });
+    }, LIST_REFRESH_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [savedSignature, myId, queryClient]);
+  useEffect(() => {
+    if (seenRepostedRef.current === repostedSignature) return;
+    seenRepostedRef.current = repostedSignature;
+    if (!myId) return;
+    const timer = setTimeout(() => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.userReposts(myId) });
+    }, LIST_REFRESH_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [repostedSignature, myId, queryClient]);
 
   // Realtime: own posts
   useEffect(() => {
-    if (!userProfile?.id) return;
+    if (!myId) return;
     const channel = supabase
-      .channel(`profile-posts-${userProfile.id}-${Date.now()}`)
+      .channel(`profile-posts-${myId}-${Date.now()}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'posts', filter: `user_id=eq.${userProfile.id}` },
-        () => { fetchAll(); }
+        { event: '*', schema: 'public', table: 'posts', filter: `user_id=eq.${myId}` },
+        () => {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.userPosts(myId) });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.userReposts(myId) });
+          void queryClient.invalidateQueries({ queryKey: savedPostsKey(myId) });
+        }
       )
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [userProfile?.id, fetchAll]);
+  }, [myId, queryClient]);
 
   // Realtime: follow counts
   useEffect(() => {
-    if (!userProfile?.id) return;
+    if (!myId) return;
     const channel = supabase
-      .channel(`profile-follows-${userProfile.id}-${Date.now()}`)
+      .channel(`profile-follows-${myId}-${Date.now()}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'follows' },
-        async (payload) => {
+        (payload) => {
           const f = payload.new as any;
           const o = payload.old as any;
-          if (f?.follower_id === userProfile.id || f?.followed_id === userProfile.id ||
-              o?.follower_id === userProfile.id || o?.followed_id === userProfile.id) {
-            const [followers, following] = await Promise.all([
-              getFollowerCount(userProfile.id),
-              getFollowingCount(userProfile.id),
-            ]);
-            setFollowerCount(followers);
-            setFollowingCount(following);
+          if (f?.follower_id === myId || f?.followed_id === myId ||
+              o?.follower_id === myId || o?.followed_id === myId) {
+            void queryClient.invalidateQueries({ queryKey: queryKeys.followCounts(myId) });
           }
         }
       )
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [userProfile?.id]);
+  }, [myId, queryClient]);
+
+  const { refetch: refetchPosts } = postsQuery;
+  const { refetch: refetchReposts } = repostsQuery;
+  const { refetch: refetchSaved } = savedQuery;
+  const { refetch: refetchCounts } = countsQuery;
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await Promise.all([fetchAll(), refreshAllData()]);
+      await Promise.all([
+        myId ? refetchPosts() : null,
+        myId ? refetchReposts() : null,
+        myId ? refetchSaved() : null,
+        myId ? refetchCounts() : null,
+        refreshAllData(),
+      ]);
     } finally {
       setRefreshing(false);
     }
-  }, [fetchAll, refreshAllData]);
+  }, [myId, refetchPosts, refetchReposts, refetchSaved, refetchCounts, refreshAllData]);
 
   const currentData = activeTab === 'posts' ? posts : activeTab === 'reposts' ? reposts : savedPosts;
+  const currentQuery = activeTab === 'posts' ? postsQuery : activeTab === 'reposts' ? repostsQuery : savedQuery;
+  // Skeleton only while nothing is cached for this tab yet.
+  const isLoading = currentQuery.isPending;
 
   const handlePostPress = useCallback((post: Post) => {
     router.push(`/post/${post.id}`);
-  }, []);
+  }, [router]);
 
+  const renderItem = useCallback(({ item }: { item: Post }) => (
+    <GridTile post={item} onPress={() => handlePostPress(item)} />
+  ), [handlePostPress]);
+
+  // All hooks are above this early return (rules of hooks).
   if (!userProfile) return null;
 
   // ─── Profile Header ────────────────────────────
 
-  const ProfileHeader = () => (
+  // An element (not a component defined in render), so the header is not
+  // remounted every time a background refresh re-renders the screen.
+  const profileHeader = (
     <View>
       <View className="px-4 py-3 border-b border-gray-800 flex-row justify-between items-center">
         <Text className="text-white font-bold text-xl">@{userProfile.username}</Text>
@@ -263,10 +362,6 @@ export default function ProfileScreen() {
 
   // ─── Render ────────────────────────────────────
 
-  const renderItem = useCallback(({ item }: { item: Post }) => (
-    <GridTile post={item} onPress={() => handlePostPress(item)} />
-  ), [handlePostPress]);
-
   const emptyMessage = activeTab === 'posts'
     ? 'No posts yet.'
     : activeTab === 'reposts'
@@ -280,7 +375,7 @@ export default function ProfileScreen() {
         renderItem={renderItem}
         keyExtractor={item => item.id}
         numColumns={NUM_COLUMNS}
-        ListHeaderComponent={ProfileHeader}
+        ListHeaderComponent={profileHeader}
         ListEmptyComponent={
           isLoading ? (
             <View className="py-4">

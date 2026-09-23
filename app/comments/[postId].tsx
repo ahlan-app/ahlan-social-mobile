@@ -29,9 +29,10 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Swipeable } from 'react-native-gesture-handler';
 import { formatDistanceToNow } from 'date-fns';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApp } from '../../store/AppContext.native';
 import { createLikeGuard } from '../../services/likeGuard';
-import { createFetchGuard, runFetchGuarded } from '../../services/fetchGuard';
+import { queryKeys } from '../../services/queryKeys';
 import {
   getCommentsForPost,
   toggleCommentLike,
@@ -72,6 +73,46 @@ const removeCommentById = (comments: Comment[], idToRemove: string): Comment[] =
 
   return changed ? next : comments;
 };
+
+/** Optimistic comments (not yet confirmed by the server) carry a temp- id. */
+const isPendingComment = (comment: Comment): boolean => comment.id.startsWith('temp-');
+
+/**
+ * Comments restored from the persisted query cache are JSON, so their
+ * timestamps come back as ISO strings. Turn them into Dates again.
+ */
+const toDate = (value: unknown): Date => {
+  if (value instanceof Date) return value;
+  const parsed = new Date(value as string | number);
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+};
+
+const normaliseComments = (comments: readonly Comment[] | null | undefined): Comment[] => {
+  if (!Array.isArray(comments)) return EMPTY_COMMENTS;
+  let changed = false;
+  const next = comments.map((comment) => {
+    const timestamp = toDate(comment.timestamp);
+    const replies = Array.isArray(comment.replies) ? normaliseComments(comment.replies) : EMPTY_COMMENTS;
+    if (timestamp === comment.timestamp && replies === comment.replies) return comment;
+    changed = true;
+    return { ...comment, timestamp, replies };
+  });
+  return changed ? next : (comments as Comment[]);
+};
+
+/** Cheap content fingerprint used to skip no-op syncs between cache and context. */
+const commentsSignature = (comments: readonly Comment[]): string =>
+  comments
+    .map(c => `${c.id}|${c.username}|${c.avatar ?? ''}|${c.isVerified ? 1 : 0}|${c.text}|${c.replies?.length ?? 0}`)
+    .join('\n');
+
+const filterBlockedComments = (
+  comments: Comment[],
+  isUserBlocked: (username: string) => boolean,
+): Comment[] =>
+  comments
+    .filter(c => !isUserBlocked(c.username))
+    .map(c => ({ ...c, replies: c.replies ? filterBlockedComments(c.replies, isUserBlocked) : [] }));
 
 // ─── Comment Item ─────────────────────────────
 
@@ -126,7 +167,8 @@ const CommentItem: React.FC<{
   const isOwnComment = comment.userId
     ? comment.userId === currentUserId
     : comment.username === currentUsername;
-  const canDelete = isOwnComment || canModerate;
+  // A comment that is still being posted cannot be deleted yet (it would come back).
+  const canDelete = !isPendingComment(comment) && (isOwnComment || canModerate);
 
   const rowContent = (
     <View className="px-4 py-3 border-b border-gray-800">
@@ -139,7 +181,7 @@ const CommentItem: React.FC<{
             <Text className="text-white font-bold">@{comment.username}</Text>
             {comment.isVerified && <VerifiedIcon color="#3b82f6" size={14} />}
             <Text className="text-gray-500 text-sm">
-              {'  '}{formatDistanceToNow(comment.timestamp, { addSuffix: true })}
+              {'  '}{formatDistanceToNow(toDate(comment.timestamp), { addSuffix: true })}
             </Text>
           </Pressable>
           <View className="mt-1">
@@ -195,129 +237,177 @@ const CommentItem: React.FC<{
 export default function CommentsScreen() {
   const { postId } = useLocalSearchParams<{ postId: string }>();
   const router = useRouter();
-  const { getComments, setComments, userProfile, isUserBlocked, postComment, addToast, isAdmin } = useApp();
+  const { getComments, setComments, areCommentsLoaded, userProfile, isUserBlocked, postComment, addToast, isAdmin } = useApp();
+  const queryClient = useQueryClient();
   const inputRef = useRef<TextInput>(null);
-  const [postOwnerId, setPostOwnerId] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    setPostOwnerId(null);
-    if (postId) {
-      getPostOwnerId(postId).then((ownerId) => {
-        if (!cancelled) setPostOwnerId(ownerId);
-      });
-    }
-    return () => { cancelled = true; };
-  }, [postId]);
+  // The post owner never changes, so this is served from the cache instantly.
+  const { data: postOwnerId = null } = useQuery({
+    queryKey: queryKeys.postOwner(postId ?? ''),
+    queryFn: () => getPostOwnerId(postId as string),
+    enabled: !!postId,
+  });
 
-  const canModerate = isAdmin || (!!postOwnerId && postOwnerId === userProfile?.id);
+  const isPostOwner = !!postOwnerId && postOwnerId === userProfile?.id;
+  const canModerate = isAdmin || isPostOwner;
 
-  const [localComments, setLocalComments] = useState<Comment[]>([]);
-  const [loading, setLoading] = useState(true);
   const [newCommentText, setNewCommentText] = useState('');
 
-  const commentsFromContext = useMemo(
-    () => (postId ? getComments(postId) : EMPTY_COMMENTS),
-    [getComments, postId],
+  // Comments are fetched through TanStack Query (memory + disk cache) and
+  // mirrored into AppContext, which stays the list's source of truth because
+  // postComment() writes optimistic comments there.
+  const commentsQuery = useQuery({
+    queryKey: queryKeys.comments(postId ?? ''),
+    queryFn: () => getCommentsForPost(postId as string),
+    enabled: !!postId,
+    // Cached comments render instantly; new comments from others are picked
+    // up by a background refresh every time the screen opens.
+    refetchOnMount: 'always',
+  });
+  const { data: cachedCommentsRaw, dataUpdatedAt: commentsUpdatedAt, isPending: commentsPending } = commentsQuery;
+
+  const cachedComments = useMemo(
+    () => (cachedCommentsRaw === undefined ? undefined : normaliseComments(cachedCommentsRaw)),
+    [cachedCommentsRaw],
   );
 
-  // Per-postId in-flight guard. Recreated when postId changes so a
-  // previous post's request can never race with a new one.
-  const fetchGuardRef = useRef(createFetchGuard());
+  const contextLoaded = postId ? areCommentsLoaded(postId) : false;
+  const commentsFromContext = useMemo(
+    () => (postId && contextLoaded ? getComments(postId) : EMPTY_COMMENTS),
+    [getComments, postId, contextLoaded],
+  );
+
+  // Two-way sync between the query cache and AppContext. The refs remember
+  // what was last seen on each side so every change is applied exactly once
+  // (no render loops):
+  //  - new query data (fetch finished, cache restored from disk, or a
+  //    setQueryData) is written into AppContext, keeping optimistic comments;
+  //  - an AppContext change made elsewhere (postComment confirmed or rolled
+  //    back) is written into the cache so reopening shows the same list.
+  const syncRef = useRef<{ postId: string | null; context: Comment[] | null; updatedAt: number }>({
+    postId: null,
+    context: null,
+    updatedAt: 0,
+  });
 
   useEffect(() => {
-    // When the route param changes, drop any in-flight request for
-    // the previous postId and start fresh.
-    fetchGuardRef.current.abort();
-    fetchGuardRef.current = createFetchGuard();
-  }, [postId]);
+    if (!postId) return;
+    const prev = syncRef.current;
+    const samePost = prev.postId === postId;
+    let context = commentsFromContext;
 
-  const loadAndSetComments = useCallback(async () => {
-    if (!postId) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    const result = await runFetchGuarded(fetchGuardRef.current, async (signal) => {
-      try {
-        const fetched = await getCommentsForPost(postId);
-        if (signal?.aborted) {
-          // The fetch was cancelled while in flight; do not apply
-          // the stale result.
-          return [];
-        }
-        setComments(postId, fetched);
-        return fetched;
-      } catch (error) {
-        if ((error as { name?: string } | undefined)?.name === 'AbortError') {
-          return [];
-        }
-        console.error('Failed to load comments', error);
-        throw error;
+    if (cachedComments !== undefined && (!samePost || commentsUpdatedAt !== prev.updatedAt)) {
+      const fresh = cachedComments;
+      const withPending = (current: Comment[]): Comment[] => {
+        const pending = current.filter(isPendingComment);
+        return pending.length > 0 ? [...pending, ...fresh] : fresh;
+      };
+      const merged = withPending(commentsFromContext);
+      if (!contextLoaded || commentsSignature(merged) !== commentsSignature(commentsFromContext)) {
+        // Updater form: merges with the latest list, so an optimistic comment
+        // confirmed (or added) after this render is never overwritten or
+        // left behind as a stale temp- duplicate.
+        setComments(postId, withPending);
+        context = merged;
       }
-    });
-    if (result.ran) {
-      setLoading(false);
+    } else if (
+      samePost &&
+      contextLoaded &&
+      cachedComments !== undefined &&
+      commentsFromContext !== prev.context &&
+      !commentsFromContext.some(isPendingComment) &&
+      commentsSignature(commentsFromContext) !== commentsSignature(cachedComments)
+    ) {
+      queryClient.setQueryData<Comment[]>(queryKeys.comments(postId), commentsFromContext);
     }
-    // When result.ran === false, a newer fetch is taking over; it
-    // owns the loading state from here on, so we leave it alone.
-  }, [postId, setComments]);
 
-  useEffect(() => {
-    loadAndSetComments();
-    return () => {
-      // On unmount, cancel any in-flight request so it can't call
-      // setComments / setLoading on an unmounted component.
-      fetchGuardRef.current.abort();
-    };
-  }, [loadAndSetComments]);
+    syncRef.current = { postId, context, updatedAt: commentsUpdatedAt };
+  }, [postId, cachedComments, commentsUpdatedAt, commentsFromContext, contextLoaded, setComments, queryClient]);
 
-  useEffect(() => {
-    const filterBlocked = (comments: Comment[]): Comment[] =>
-      comments
-        .filter(c => !isUserBlocked(c.username))
-        .map(c => ({ ...c, replies: c.replies ? filterBlocked(c.replies) : [] }));
-    setLocalComments(filterBlocked(commentsFromContext));
-  }, [commentsFromContext, isUserBlocked]);
+  // Until AppContext holds this post's comments, render the cached copy so
+  // there is no spinner (or empty-state flash) when cached data exists.
+  const sourceComments = contextLoaded ? commentsFromContext : (cachedComments ?? EMPTY_COMMENTS);
+
+  const localComments = useMemo(
+    () => filterBlockedComments(sourceComments, isUserBlocked),
+    [sourceComments, isUserBlocked],
+  );
+
+  const loading = !!postId && !contextLoaded && cachedComments === undefined && commentsPending;
 
   const handleAddComment = () => {
     const text = newCommentText.trim();
     if (!text || !postId) return;
     setNewCommentText('');
-    postComment(postId, cleanHtml(text));
+    const targetPostId = postId;
+    void postComment(targetPostId, cleanHtml(text))
+      .catch((error) => console.error('Failed to post comment', error))
+      .finally(() => {
+        // Refresh the cached list even if this screen was closed meanwhile.
+        void queryClient.invalidateQueries({ queryKey: queryKeys.comments(targetPostId), refetchType: 'all' });
+      });
   };
 
   const deleteCommentNow = useCallback(async (commentId: string) => {
-    const previous = localComments;
-    const updated = removeCommentById(localComments, commentId);
-    if (updated === localComments) return;
+    if (!postId) return;
+    // `sourceComments` may be a few renders old (captured when the Alert
+    // opened), so it is only used to find the comment; every write below
+    // goes through an updater on the latest list.
+    const previous = sourceComments;
+    if (removeCommentById(previous, commentId) === previous) return;
+    const removedIndex = previous.findIndex(c => c.id === commentId);
+    const removed = removedIndex >= 0 ? previous[removedIndex] : undefined;
 
-    setLocalComments(updated);
-    if (postId) setComments(postId, updated);
+    const key = queryKeys.comments(postId);
+    const previousCache = queryClient.getQueryData<Comment[]>(key);
 
+    setComments(postId, current => removeCommentById(current, commentId));
     if (commentId.startsWith('temp-')) return;
+
+    // Cancel before writing: an in-flight fetch could still contain the
+    // comment (the invalidate in `finally` fetches again afterwards).
+    void queryClient.cancelQueries({ queryKey: key });
+    queryClient.setQueryData<Comment[]>(key, old => (old ? removeCommentById(old, commentId) : old));
+
+    /** Puts the comment back where it was (a nested reply restores the snapshot). */
+    const restore = (current: Comment[], fallback: Comment[]): Comment[] => {
+      if (!removed) return fallback;
+      if (current.some(c => c.id === commentId)) return current;
+      const next = current.slice();
+      next.splice(Math.min(removedIndex, next.length), 0, removed);
+      return next;
+    };
 
     try {
       await apiDeleteComment(commentId);
     } catch (error) {
       console.error('Failed to delete comment', error);
       addToast((error as Error)?.message || 'Failed to delete comment.', 'error');
-      setLocalComments(previous);
-      if (postId) setComments(postId, previous);
+      setComments(postId, current => restore(current, previous));
+      if (previousCache !== undefined) {
+        queryClient.setQueryData<Comment[]>(key, old => restore(old ?? previousCache, previousCache));
+      }
+    } finally {
+      void queryClient.invalidateQueries({ queryKey: key });
     }
-  }, [addToast, localComments, postId, setComments]);
+  }, [addToast, sourceComments, postId, queryClient, setComments]);
 
   const handleDeleteComment = useCallback((comment: Comment) => {
     const isOwn = comment.userId ? comment.userId === userProfile?.id : comment.username === userProfile?.username;
+    const message = isOwn
+      ? 'Your comment will be removed.'
+      : isPostOwner
+        ? `The comment from @${comment.username} will be removed from your post.`
+        : `The comment from @${comment.username} will be removed.`;
     Alert.alert(
       'Delete comment?',
-      isOwn ? 'Your comment will be removed.' : `The comment from @${comment.username} will be removed from your post.`,
+      message,
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Delete', style: 'destructive', onPress: () => { void deleteCommentNow(comment.id); } },
       ],
     );
-  }, [deleteCommentNow, userProfile?.id, userProfile?.username]);
+  }, [deleteCommentNow, isPostOwner, userProfile?.id, userProfile?.username]);
 
   const handleViewProfile = useCallback((username: string) => {
     router.push(`/user/${username}`);
@@ -362,6 +452,7 @@ export default function CommentsScreen() {
         ) : (
           <FlatList
             data={localComments}
+            extraData={canModerate}
             keyExtractor={item => item.id}
             renderItem={renderItem}
             ListEmptyComponent={

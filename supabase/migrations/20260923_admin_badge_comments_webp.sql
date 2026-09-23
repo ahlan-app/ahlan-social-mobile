@@ -139,24 +139,71 @@ CREATE POLICY "Admins can delete any post"
 -- =========================================================================
 -- 2. Comment deletion: author OR owner of the post (OR admin)
 -- =========================================================================
-ALTER TABLE public.comments ENABLE ROW LEVEL SECURITY;
 
+-- 2a. Enabling RLS denies whatever no PERMISSIVE policy allows, so create
+--     baseline policies only where none exist; reading and posting keep working.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies
+                  WHERE schemaname = 'public' AND tablename = 'comments'
+                    AND permissive = 'PERMISSIVE' AND cmd IN ('SELECT', 'ALL')) THEN
+    CREATE POLICY "Comments are viewable by everyone"
+      ON public.comments FOR SELECT USING (true);
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies
+                  WHERE schemaname = 'public' AND tablename = 'comments'
+                    AND permissive = 'PERMISSIVE' AND cmd IN ('INSERT', 'ALL')) THEN
+    CREATE POLICY "Users can add their own comments"
+      ON public.comments FOR INSERT TO authenticated
+      WITH CHECK (user_id = (SELECT auth.uid()));
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies
+                  WHERE schemaname = 'public' AND tablename = 'comments'
+                    AND permissive = 'PERMISSIVE' AND cmd IN ('UPDATE', 'ALL')) THEN
+    CREATE POLICY "Users can edit their own comments"
+      ON public.comments FOR UPDATE TO authenticated
+      USING (user_id = (SELECT auth.uid()))
+      WITH CHECK (user_id = (SELECT auth.uid()));
+  END IF;
+END $$;
+
+ALTER TABLE public.comments ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.comments TO authenticated;
+
+-- 2b. Permissive policies are OR-ed, so an existing "delete own comments"
+--     policy keeps working next to this one.
 DROP POLICY IF EXISTS "Comment authors and post owners can delete comments" ON public.comments;
 CREATE POLICY "Comment authors and post owners can delete comments"
   ON public.comments FOR DELETE
   TO authenticated
   USING (
-    auth.uid() = user_id
+    user_id = (SELECT auth.uid())
     OR EXISTS (
       SELECT 1 FROM public.posts p
        WHERE p.id = comments.post_id
-         AND p.user_id = auth.uid()
+         AND p.user_id = (SELECT auth.uid())
     )
-    OR public.ahlan_is_admin(auth.uid())
+    OR public.ahlan_is_admin((SELECT auth.uid()))
   );
 
--- Rows that reference a comment (likes, replies, notifications) must not
--- block its deletion: make every foreign key to comments ON DELETE CASCADE.
+-- 2c. A RESTRICTIVE delete policy would still block post owners: warn.
+DO $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN SELECT policyname FROM pg_policies
+            WHERE schemaname = 'public' AND tablename = 'comments'
+              AND permissive = 'RESTRICTIVE' AND cmd IN ('DELETE', 'ALL')
+  LOOP
+    RAISE WARNING 'Restrictive policy "%" on public.comments may block post owners from deleting comments', r.policyname;
+  END LOOP;
+END $$;
+
+-- 2d. Rows that reference a comment (likes, replies, notifications) must not
+--     block its deletion: make every foreign key to comments ON DELETE CASCADE.
+--     The regex also strips the PG15+ "ON DELETE SET NULL (cols)" form.
 DO $$
 DECLARE
   r record;
@@ -164,7 +211,9 @@ BEGIN
   FOR r IN
     SELECT c.conname,
            c.conrelid::regclass AS tbl,
-           regexp_replace(pg_get_constraintdef(c.oid), '\s+ON DELETE\s+(NO ACTION|RESTRICT|SET NULL|SET DEFAULT)', '', 'i') AS def
+           regexp_replace(pg_get_constraintdef(c.oid),
+                          '\s+ON DELETE\s+(NO ACTION|RESTRICT|SET NULL|SET DEFAULT)(\s*\([^)]*\))?',
+                          '', 'i') AS def
       FROM pg_constraint c
      WHERE c.contype = 'f'
        AND c.confrelid = 'public.comments'::regclass
@@ -175,6 +224,36 @@ BEGIN
     EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', r.tbl, r.conname);
     EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %I %s ON DELETE CASCADE', r.tbl, r.conname, r.def);
   END LOOP;
+END $$;
+
+-- 2e. If notifications.comment_id has no foreign key, remove the comment's
+--     notifications together with it (only when the column types match).
+CREATE OR REPLACE FUNCTION public.comments_cleanup_notifications()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+  DELETE FROM public.notifications WHERE comment_id = OLD.id;
+  RETURN OLD;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.comments_cleanup_notifications() FROM PUBLIC, anon;
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1
+               FROM information_schema.columns n
+               JOIN information_schema.columns c
+                 ON c.table_schema = 'public' AND c.table_name = 'comments' AND c.column_name = 'id'
+              WHERE n.table_schema = 'public' AND n.table_name = 'notifications'
+                AND n.column_name = 'comment_id' AND n.data_type = c.data_type) THEN
+    DROP TRIGGER IF EXISTS comments_cleanup_notifications ON public.comments;
+    CREATE TRIGGER comments_cleanup_notifications
+      AFTER DELETE ON public.comments
+      FOR EACH ROW EXECUTE FUNCTION public.comments_cleanup_notifications();
+  END IF;
 END $$;
 
 -- =========================================================================

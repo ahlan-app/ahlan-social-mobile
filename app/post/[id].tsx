@@ -13,45 +13,120 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, Text, ScrollView, ActivityIndicator, RefreshControl } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useApp } from '../../store/AppContext.native';
 import { getPostById } from '../../services/apiService';
+import { queryKeys } from '../../services/queryKeys';
+import { supabase } from '../../services/supabase.native';
 import PostCard from '../../components/native/PostCard';
 import type { Post } from '../../types';
+
+// Cached lists that can already hold the post (feed pages, profile grids,
+// explore) — used to open a post instantly when it was just on screen.
+const POST_LIST_QUERY_ROOTS = ['feed', 'userPosts', 'userReposts', 'savedPosts', 'trending'] as const;
+
+type CachedPostHit = { post: Post; updatedAt: number };
+
+const isCachedPost = (value: unknown, postId: string): value is Post => {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<Post>;
+  return candidate.id === postId
+    && typeof candidate.username === 'string'
+    && typeof candidate.content === 'string';
+};
+
+/** Finds the post in Post[], { pages: [...] } (infinite) or { posts: [...] } shapes. */
+const findPostInData = (data: unknown, postId: string, depth = 0): Post | undefined => {
+  if (depth > 4 || !data || typeof data !== 'object') return undefined;
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      if (isCachedPost(item, postId)) return item;
+      if (item && typeof item === 'object' && (Array.isArray(item) || 'posts' in item || 'pages' in item)) {
+        const found = findPostInData(item, postId, depth + 1);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  }
+  const container = data as { pages?: unknown; posts?: unknown };
+  return findPostInData(container.pages, postId, depth + 1)
+    ?? findPostInData(container.posts, postId, depth + 1);
+};
+
+/** The freshest copy of the post held by any cached list query. */
+const findPostInQueryCache = (queryClient: QueryClient, postId: string): CachedPostHit | undefined => {
+  let best: CachedPostHit | undefined;
+  for (const root of POST_LIST_QUERY_ROOTS) {
+    for (const [queryKey, data] of queryClient.getQueriesData({ queryKey: [root] })) {
+      const post = findPostInData(data, postId);
+      if (!post) continue;
+      const updatedAt = queryClient.getQueryState(queryKey)?.dataUpdatedAt ?? 0;
+      if (!best || updatedAt > best.updatedAt) best = { post, updatedAt };
+    }
+  }
+  return best;
+};
+
+/**
+ * getPostById resolves undefined for "not found" and for network errors alike.
+ * Only a confirmed missing row becomes null ("Post not found"); any other
+ * failure throws, so a cached copy stays on screen while offline.
+ */
+const fetchPostDetail = async (postId: string): Promise<Post | null> => {
+  const post = await getPostById(postId);
+  if (post) return post;
+  const { data, error } = await supabase.from('posts').select('id').eq('id', postId).maybeSingle();
+  // 22P02 = the id is not a valid uuid (e.g. a malformed deep link): it cannot exist.
+  if (error?.code === '22P02') return null;
+  if (error) throw error;
+  if (data) throw new Error('Post could not be loaded');
+  return null;
+};
 
 export default function PostDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { isUserBlocked } = useApp();
 
-  const [post, setPost] = useState<Post | null>(null);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchPost = async () => {
-    if (!id) return;
+  const postId = typeof id === 'string' ? id : '';
+  // Looked up lazily (only when the post itself is not cached) and at most
+  // once per render: initialData runs before initialDataUpdatedAt.
+  let seed: CachedPostHit | undefined | null = null;
+  const getSeed = () => {
+    if (seed === null) seed = postId ? findPostInQueryCache(queryClient, postId) : undefined;
+    return seed;
+  };
+
+  const postQuery = useQuery({
+    queryKey: queryKeys.post(postId),
+    queryFn: () => fetchPostDetail(postId),
+    enabled: Boolean(postId),
+    initialData: () => getSeed()?.post,
+    initialDataUpdatedAt: () => getSeed()?.updatedAt,
+    // Show the cached copy instantly, but always refresh counts in the background.
+    refetchOnMount: 'always',
+  });
+  const post = postQuery.data ?? null;
+  const loading = Boolean(postId) && postQuery.isPending && !postQuery.data;
+
+  const refetchPost = postQuery.refetch;
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
     try {
-      const data = await getPostById(id);
-      setPost(data || null);
+      await refetchPost();
     } catch (error) {
       console.error('Failed to load post', error);
     } finally {
-      setLoading(false);
+      setRefreshing(false);
     }
-  };
-
-  useEffect(() => {
-    fetchPost();
-  }, [id]);
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await fetchPost();
-    setRefreshing(false);
-  };
+  }, [refetchPost]);
 
   if (loading) {
     return (
