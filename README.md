@@ -100,6 +100,9 @@ eas build --platform ios
 eas build --platform android
 ```
 
+Android releases (Google Play `.aab` + direct-install `.apk`) are built and
+published to GitHub Releases by CI — see [docs/ANDROID_RELEASE.md](docs/ANDROID_RELEASE.md).
+
 ## Project Structure
 ```
 ahlan-social-mobile/

@@ -13,70 +13,95 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { View, Text, FlatList, Pressable, ActivityIndicator } from 'react-native';
 import { Stack, useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useQuery } from '@tanstack/react-query';
 import { useApp } from '../store/AppContext.native';
 import { getFollowerUsers, getFollowingUsers, getPostLikers, getPostReposters, getStoryViewers } from '../services/apiService';
+import { queryKeys } from '../services/queryKeys';
 import UserAvatar from '../components/native/UserAvatar';
 import { VerifiedIcon } from '../components/native/Icons';
 import type { SimpleUser } from '../types';
 import type { StoryViewer } from '../services/apiService';
 
+type UserListType = 'followers' | 'following' | 'likes' | 'reposts' | 'storyViews';
+
+const EMPTY_USERS: SimpleUser[] = [];
+
+/** The id a list is about: a user for followers/following, a post, or a story. */
+const getListSubjectId = (
+  type: UserListType | undefined,
+  userId?: string,
+  postId?: string,
+  storyId?: string,
+): string | null => {
+  switch (type) {
+    case 'followers':
+    case 'following':
+      return userId || null;
+    case 'likes':
+    case 'reposts':
+      return postId || null;
+    case 'storyViews':
+      return storyId || null;
+    default:
+      return null;
+  }
+};
+
+/** Every list type is cached as plain SimpleUser[] under queryKeys.userList(type, id). */
+const fetchUserList = async (type: UserListType, id: string): Promise<SimpleUser[]> => {
+  switch (type) {
+    case 'followers':
+      return getFollowerUsers(id);
+    case 'following':
+      return getFollowingUsers(id);
+    case 'likes':
+      return getPostLikers(id);
+    case 'reposts':
+      return getPostReposters(id);
+    case 'storyViews': {
+      const viewers = await getStoryViewers(id);
+      return viewers.map((v: StoryViewer) => ({
+        id: v.user_id,
+        username: v.username,
+        name: v.username,
+        avatar: v.avatar_url,
+        isVerified: false,
+      }));
+    }
+    default:
+      return [];
+  }
+};
+
 export default function UserListScreen() {
   const { type, userId, postId, storyId, title } = useLocalSearchParams<{
-    type: 'followers' | 'following' | 'likes' | 'reposts' | 'storyViews';
+    type: UserListType;
     userId?: string;
     postId?: string;
     storyId?: string;
     title: string;
   }>();
   const router = useRouter();
-  const { isUserBlocked, isUserFollowed, toggleFollowUser, userProfile } = useApp();
+  const { isUserBlocked, isUserIdBlocked, isUserFollowed, toggleFollowUser, userProfile } = useApp();
 
-  const [users, setUsers] = useState<SimpleUser[]>([]);
-  const [loading, setLoading] = useState(true);
   const [pendingUsernames, setPendingUsernames] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const fetchUsers = async () => {
-      setLoading(true);
-      try {
-        let result: SimpleUser[] = [];
-        if (type === 'followers' && userId) {
-          result = await getFollowerUsers(userId);
-        } else if (type === 'following' && userId) {
-          result = await getFollowingUsers(userId);
-        } else if (type === 'likes' && postId) {
-          result = await getPostLikers(postId);
-        } else if (type === 'reposts' && postId) {
-          result = await getPostReposters(postId);
-        } else if (type === 'storyViews' && storyId) {
-          const viewers = await getStoryViewers(storyId);
-          result = viewers.map((v: StoryViewer) => ({
-            id: v.user_id,
-            username: v.username,
-            name: v.username,
-            avatar: v.avatar_url,
-            isVerified: false,
-          }));
-        }
-        if (!cancelled) {
-          setUsers(result);
-        }
-      } catch (err) {
-        console.error('Failed to fetch user list:', err);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    fetchUsers();
-    return () => { cancelled = true; };
-  }, [type, userId, postId, storyId]);
+  const subjectId = getListSubjectId(type, userId, postId, storyId);
+  const usersQuery = useQuery({
+    queryKey: queryKeys.userList(type ?? '', subjectId ?? ''),
+    queryFn: () => fetchUserList(type as UserListType, subjectId as string),
+    enabled: Boolean(type && subjectId),
+    // Opening a list is an explicit request for it: show the cached copy
+    // instantly, but always refresh it in the background.
+    refetchOnMount: 'always',
+  });
+  const users = usersQuery.data ?? EMPTY_USERS;
+  // Spinner only when nothing is cached yet (a list without an id shows the empty state).
+  const loading = Boolean(subjectId) && usersQuery.isPending && !usersQuery.data;
 
   const withPendingUsername = useCallback((username: string, add: boolean) => {
     const key = username.trim().toLowerCase();
@@ -108,7 +133,7 @@ export default function UserListScreen() {
     const uniqueUsers: SimpleUser[] = [];
 
     for (const user of users) {
-      if (isUserBlocked(user.username)) continue;
+      if (isUserIdBlocked(user.id) || isUserBlocked(user.username)) continue;
 
       const key = user.id || user.username;
       if (seen.has(key)) continue;
@@ -118,7 +143,7 @@ export default function UserListScreen() {
     }
 
     return uniqueUsers;
-  }, [users, isUserBlocked]);
+  }, [users, isUserBlocked, isUserIdBlocked]);
 
   const renderItem = useCallback(
     ({ item }: { item: SimpleUser }) => {
@@ -141,7 +166,7 @@ export default function UserListScreen() {
                 </Text>
                 {item.isVerified && (
                   <View className="ml-1">
-                    <VerifiedIcon size={16} />
+                    <VerifiedIcon color="#3b82f6" size={16} />
                   </View>
                 )}
               </View>

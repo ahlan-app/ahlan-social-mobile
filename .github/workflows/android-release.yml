@@ -1,0 +1,227 @@
+name: Android Release (AAB + APK)
+
+# Builds a Play Store ready, upload-key signed Android App Bundle (.aab) and a
+# signed APK for direct download, then attaches both to a GitHub Release.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   EXPO_PUBLIC_SUPABASE_URL          Supabase project URL
+#   EXPO_PUBLIC_SUPABASE_ANON_KEY     Supabase anon (public) key
+#   ANDROID_UPLOAD_KEYSTORE_BASE64    base64 -w0 of the keystore (.jks)
+#   ANDROID_UPLOAD_KEYSTORE_PASSWORD  keystore password
+#   ANDROID_UPLOAD_KEY_ALIAS          key alias
+#   ANDROID_UPLOAD_KEY_PASSWORD       key password
+# Recommended repository variable:
+#   ANDROID_SIGNING_CERT_SHA256       lowercase hex SHA-256 of the upload key's
+#                                     certificate; the build fails if the
+#                                     artifacts are signed with any other key.
+#
+# Trigger: push a tag matching app.json's version (e.g. v1.0.9), or run it
+# manually from the Actions tab (workflow_dispatch needs this file on main).
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (default: v<app.json version>)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        # bash -eo pipefail: a failing command inside a pipe fails the step
+        shell: bash
+    env:
+      # NOTE: do NOT set NODE_ENV=production at job level: npm ci would then
+      # skip devDependencies (typescript, jest, tailwindcss) and the build fails.
+      EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+      ANDROID_UPLOAD_KEYSTORE_BASE64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+      AHLAN_UPLOAD_STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
+      AHLAN_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+      AHLAN_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+      AHLAN_REQUIRE_RELEASE_SIGNING: 'true'
+      EXPECTED_CERT_SHA256: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
+      # Play: every ABI (Play serves per-device splits). GitHub APK: ARM phones only.
+      AAB_ABIS: armeabi-v7a,arm64-v8a,x86,x86_64
+      APK_ABIS: armeabi-v7a,arm64-v8a
+
+    steps:
+      - name: Check required secrets
+        run: |
+          missing=0
+          for name in EXPO_PUBLIC_SUPABASE_URL EXPO_PUBLIC_SUPABASE_ANON_KEY \
+                      ANDROID_UPLOAD_KEYSTORE_BASE64 AHLAN_UPLOAD_STORE_PASSWORD \
+                      AHLAN_UPLOAD_KEY_ALIAS AHLAN_UPLOAD_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required secret for $name"
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Gradle memory for release builds
+        run: |
+          mkdir -p ~/.gradle
+          {
+            echo "org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
+            echo "kotlin.daemon.jvmargs=-Xmx2g"
+          } >> ~/.gradle/gradle.properties
+
+      - name: Resolve version and tag
+        id: version
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          VERSION=$(node -p "require('./app.json').expo.version")
+          VERSION_CODE=$(node -p "require('./app.json').expo.android.versionCode")
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="${INPUT_TAG:-v${VERSION}}"
+          fi
+          if [ "$TAG" != "v${VERSION}" ]; then
+            echo "::error::Tag $TAG does not match app.json version v${VERSION}"
+            exit 1
+          fi
+          # Never replace the files of an existing release with another commit's build.
+          # Prefer the peeled commit (^{}) of an annotated tag over the tag object id.
+          EXISTING=$(git ls-remote --tags origin "refs/tags/$TAG" "refs/tags/$TAG^{}" \
+            | awk '/\^\{\}$/ { peeled = $1 } !/\^\{\}$/ { if (!plain) plain = $1 } END { print (peeled ? peeled : plain) }')
+          if [ -n "$EXISTING" ] && [ "$EXISTING" != "$GITHUB_SHA" ]; then
+            echo "::error::Tag $TAG already exists at $EXISTING (this run is $GITHUB_SHA); bump the version instead"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck and tests
+        run: |
+          npx tsc --noEmit
+          npx jest --ci
+
+      - name: Expo prebuild (android)
+        run: npx expo prebuild --platform android --no-install --clean
+
+      - name: Restore upload keystore
+        run: |
+          echo "$ANDROID_UPLOAD_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/upload.jks"
+          echo "AHLAN_UPLOAD_STORE_FILE=$RUNNER_TEMP/upload.jks" >> "$GITHUB_ENV"
+
+      - name: Build AAB (Google Play)
+        working-directory: android
+        env:
+          NODE_ENV: production
+        run: ./gradlew --no-daemon bundleRelease -PreactNativeArchitectures="$AAB_ABIS"
+
+      - name: Build APK (direct download)
+        working-directory: android
+        env:
+          NODE_ENV: production
+        run: ./gradlew --no-daemon assembleRelease -PreactNativeArchitectures="$APK_ABIS"
+
+      - name: Verify signatures and 16 KB page size
+        run: |
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          OBJDUMP=$(ls "$ANDROID_HOME"/ndk/*/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump | sort -V | tail -1)
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          AAB=android/app/build/outputs/bundle/release/app-release.aab
+
+          # 1) Signed, not with the debug key, and with the expected certificate.
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" | tee apk-certs.txt
+          jarsigner -verify "$AAB" | tail -n 1
+          APK_SHA=$(awk -F': ' '/Signer #1 certificate SHA-256 digest/{print $2}' apk-certs.txt)
+          AAB_SHA=$(keytool -printcert -jarfile "$AAB" | awk '/SHA256:/{print $2}' | tr -d ':' | tr 'A-F' 'a-f')
+          if grep -q "CN=Android Debug" apk-certs.txt || keytool -printcert -jarfile "$AAB" | grep -q "CN=Android Debug"; then
+            echo "::error::Release artifacts are signed with the debug key"; exit 1
+          fi
+          if [ "$APK_SHA" != "$AAB_SHA" ]; then
+            echo "::error::APK ($APK_SHA) and AAB ($AAB_SHA) are signed with different keys"; exit 1
+          fi
+          if [ -n "$EXPECTED_CERT_SHA256" ] && [ "$APK_SHA" != "$EXPECTED_CERT_SHA256" ]; then
+            echo "::error::Signing cert $APK_SHA != expected $EXPECTED_CERT_SHA256 (APK would not update v1.0.x installs)"; exit 1
+          fi
+
+          # 2) 16 KB: zip alignment of uncompressed .so files in the APK ...
+          "$BUILD_TOOLS/zipalign" -c -P 16 -v 4 "$APK" > /dev/null
+          # ... and ELF LOAD segment alignment >= 2**14 for 64-bit libs (APK + AAB).
+          check_elf() {
+            local archive="$1" work bad=0 so abi
+            work=$(mktemp -d)
+            unzip -q -o "$archive" 'lib/*' 'base/lib/*' -d "$work" 2>/dev/null || true
+            while IFS= read -r so; do
+              abi=$(basename "$(dirname "$so")")
+              case "$abi" in arm64-v8a|x86_64) ;; *) continue ;; esac
+              if ! "$OBJDUMP" -p "$so" | awk '$1=="LOAD"{ split($NF, a, "\\*\\*"); if (a[2]+0 < 14) bad=1 } END{ exit bad }'; then
+                echo "::error::$archive: $abi/$(basename "$so") is not 16 KB aligned"; bad=1
+              fi
+            done < <(find "$work" -name '*.so')
+            rm -rf "$work"
+            return $bad
+          }
+          check_elf "$APK"
+          check_elf "$AAB"
+
+      - name: Collect release files
+        run: |
+          mkdir -p dist
+          cp android/app/build/outputs/bundle/release/app-release.aab "dist/AhlanSocial-v${{ steps.version.outputs.version }}.aab"
+          cp android/app/build/outputs/apk/release/app-release.apk "dist/AhlanSocial-v${{ steps.version.outputs.version }}.apk"
+          (cd dist && sha256sum *.aab *.apk > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          rm -f "$RUNNER_TEMP/upload.jks"
+          NOTES="docs/releases/${{ steps.version.outputs.tag }}.md"
+          if [ -f "$NOTES" ]; then
+            cp "$NOTES" RELEASE_NOTES.md
+          else
+            printf '# Ahlan Social %s\n\n- AAB (Google Play): AhlanSocial-v%s.aab\n- APK (direct install): AhlanSocial-v%s.apk\n- versionCode %s\n' \
+              "${{ steps.version.outputs.tag }}" "${{ steps.version.outputs.version }}" "${{ steps.version.outputs.version }}" "${{ steps.version.outputs.version_code }}" > RELEASE_NOTES.md
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AhlanSocial-v${{ steps.version.outputs.version }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Ahlan Social ${{ steps.version.outputs.tag }} — Android (AAB + APK)
+          body_path: RELEASE_NOTES.md
+          files: |
+            dist/AhlanSocial-v${{ steps.version.outputs.version }}.aab
+            dist/AhlanSocial-v${{ steps.version.outputs.version }}.apk
+            dist/SHA256SUMS.txt
+          fail_on_unmatched_files: true

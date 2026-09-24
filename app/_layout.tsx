@@ -14,8 +14,8 @@
 // limitations under the License.
 
 import "../global.css";
-import React, { useEffect, useRef } from 'react';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import React, { useCallback, useEffect, useRef } from 'react';
+import { Stack, usePathname, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -27,7 +27,15 @@ import { Anton_400Regular } from '@expo-google-fonts/anton';
 import { Fredoka_500Medium } from '@expo-google-fonts/fredoka';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { AppProvider, useApp } from '../store/AppContext.native';
+import {
+  queryClient,
+  queryPersister,
+  QUERY_CACHE_MAX_AGE,
+  shouldPersistQuery,
+} from '../services/queryClient';
 import { supabase } from '../services/supabase.native';
 import {
   registerForPushNotifications,
@@ -35,7 +43,13 @@ import {
   addNotificationResponseListener,
   setBadgeCount,
 } from '../services/notifications';
+import { consumeNotificationResponse } from '../services/notificationResponse';
+import { resolveRoutePath, type NotificationRoute } from '../services/notificationRouting';
 import ToastContainer from '../components/native/Toast';
+
+// Render errors show expo-router's error screen (with Retry) instead of
+// closing the app.
+export { ErrorBoundary } from 'expo-router';
 
 // Keep the splash screen visible while we fetch resources
 SplashScreen.preventAutoHideAsync();
@@ -44,7 +58,11 @@ function RootLayoutNav() {
   const { userProfile, theme } = useApp();
   const segments = useSegments();
   const router = useRouter();
-  const notificationResponseListener = useRef<Notifications.EventSubscription | null>(null);
+  const pathname = usePathname();
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
+  const segmentsRef = useRef(segments);
+  segmentsRef.current = segments;
 
   const [fontsLoaded, fontError] = useFonts({
     DancingScript_700Bold,
@@ -74,7 +92,9 @@ function RootLayoutNav() {
 
     // Auth state change listener — registered ONCE
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_IN') {
+      // Only leave the auth screens on SIGNED_IN; supabase can re-emit it while
+      // the user is already inside the app, which must not reset navigation.
+      if (event === 'SIGNED_IN' && segmentsRef.current[0] === '(auth)') {
         router.replace('/(tabs)');
       } else if (event === 'SIGNED_OUT') {
         router.replace('/(auth)/login');
@@ -100,27 +120,36 @@ function RootLayoutNav() {
     setBadgeCount(0);
   }, [userProfile?.id]);
 
-  // Notification tap handler — route to relevant screen
+  // Notification tap handler — route to relevant screen. Launcher icon taps
+  // on some Android launchers arrive as fake responses; consumeNotificationResponse
+  // filters those out and handles each real tap only once, so resuming the app
+  // keeps the last screen instead of opening Notifications.
+  const openNotificationRoute = useCallback((target: NotificationRoute | null) => {
+    if (!target || !target.route) return;
+    if (pathnameRef.current === resolveRoutePath(target.route, target.params)) return;
+    router.push({ pathname: target.route, params: target.params } as never);
+  }, [router]);
+
   useEffect(() => {
-    notificationResponseListener.current = addNotificationResponseListener((response) => {
-      const data = response.notification.request.content.data as Record<string, string> | undefined;
-      if (!data) return;
-
-      if (data.type === 'follow' && data.username) {
-        router.push(`/user/${data.username}`);
-      } else if (data.type === 'message' && data.conversationId) {
-        router.push('/messages');
-      } else if (data.postId) {
-        router.push(`/post/${data.postId}`);
-      } else {
-        router.push('/notifications');
-      }
+    const subscription = addNotificationResponseListener((response) => {
+      consumeNotificationResponse(response).then(openNotificationRoute).catch(() => {});
     });
+    return () => subscription.remove();
+  }, [openNotificationRoute]);
 
-    return () => {
-      notificationResponseListener.current?.remove();
-    };
-  }, []);
+  // Cold start from a notification tap: handled once the user is signed in.
+  const coldStartChecked = useRef(false);
+  useEffect(() => {
+    if (!fontsLoaded || !userProfile?.id || coldStartChecked.current) return;
+    coldStartChecked.current = true;
+    let last: Notifications.NotificationResponse | null = null;
+    try {
+      last = Notifications.getLastNotificationResponse();
+    } catch {
+      last = null;
+    }
+    consumeNotificationResponse(last).then(openNotificationRoute).catch(() => {});
+  }, [fontsLoaded, userProfile?.id, openNotificationRoute]);
 
   if (!fontsLoaded && !fontError) {
     return null;
@@ -148,15 +177,26 @@ function RootLayoutNav() {
   );
 }
 
+// Persisted TanStack Query cache: screens render the last known data
+// instantly on launch; a new app version starts with an empty cache.
+const persistOptions = {
+  persister: queryPersister,
+  maxAge: QUERY_CACHE_MAX_AGE,
+  buster: Constants.expoConfig?.version ?? 'dev',
+  dehydrateOptions: { shouldDehydrateQuery: shouldPersistQuery, shouldDehydrateMutation: () => false },
+};
+
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <AppProvider>
-          <StatusBar style="light" />
-          <RootLayoutNav />
-          <ToastContainer />
-        </AppProvider>
+        <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
+          <AppProvider>
+            <StatusBar style="light" />
+            <RootLayoutNav />
+            <ToastContainer />
+          </AppProvider>
+        </PersistQueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

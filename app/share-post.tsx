@@ -31,7 +31,7 @@ import type { Post } from '../types';
 export default function SharePostScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { addToast } = useApp();
+  const { addToast, isUserIdBlocked, isUserBlocked } = useApp();
 
   const [post, setPost] = useState<Post | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -56,7 +56,9 @@ export default function SharePostScreen() {
     }
     try {
       const users = await searchUsers(text.trim());
-      setResults(users || []);
+      // No sharing to accounts with a block in either direction.
+      setResults((users || []).filter((u: { id?: string; username?: string }) =>
+        !isUserIdBlocked(u.id) && !isUserBlocked(u.username)));
     } catch (error) {
       console.error('User search error:', error);
       setResults([]);

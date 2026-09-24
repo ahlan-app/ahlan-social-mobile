@@ -20,6 +20,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { useApp } from '../store/AppContext.native';
 import { cleanHtml, uploadAvatar, updateUserProfileData } from '../services/apiService';
+import { invalidateAfterProfileChange } from '../services/queryClient';
 import UserAvatar from '../components/native/UserAvatar';
 export default function EditProfileScreen() {
   const router = useRouter();
@@ -64,10 +65,12 @@ export default function EditProfileScreen() {
       const promises: Promise<unknown>[] = [];
 
       if (avatarUri) {
+        // uploadAvatar compresses (max 1080px, 70% WebP) and saves avatar_url
         promises.push(
-          fetch(avatarUri)
-            .then((res) => res.blob())
-            .then((blob) => uploadAvatar(blob))
+          uploadAvatar(avatarUri).then((publicUrl) => {
+            if (publicUrl) updateProfile({ profilePicture: publicUrl });
+            return publicUrl;
+          })
         );
       }
 
@@ -92,6 +95,8 @@ export default function EditProfileScreen() {
       if (failed) {
         throw new Error('One or more updates failed');
       }
+      // Posts, comments and profile screens show my name/username/avatar.
+      void invalidateAfterProfileChange(originalProfile?.id, [originalProfile?.username, username]);
     } catch {
       // Revert to original profile on failure
       if (originalProfile) {
