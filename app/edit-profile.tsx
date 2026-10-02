@@ -33,10 +33,10 @@ export default function EditProfileScreen() {
   const [saving, setSaving] = useState(false);
 
   const pickImage = async () => {
+    // No manual crop screen: the picker returns the image as-is and
+    // uploadAvatar center-crops it to a square automatically.
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [1, 1],
       quality: 0.8,
     });
 

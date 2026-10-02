@@ -18,7 +18,7 @@ import type { Message, Post, Notification, Comment, Story, UserProfile, SimpleUs
 import type { User } from '@supabase/supabase-js';
 // Import supabase client from the native adapter (uses SecureStore for session persistence)
 import { supabase } from './supabase.native';
-import { prepareImageForUpload, readFileAsArrayBuffer } from './imageCompression';
+import { prepareImageForUpload, readFileAsArrayBuffer, autoCropImage } from './imageCompression';
 import type { BlockRelationRow } from './blockRelations';
 // Re-export so other files can import from apiService
 export { supabase };
@@ -390,19 +390,26 @@ const isMimeTypeRejected = (error: unknown): boolean => {
 /**
  * Compresses a local image (max 1080px wide, 70% WebP) and hands the bytes to
  * `send`. If a storage bucket still rejects WebP (migration not applied yet),
- * retries once as JPEG.
+ * retries once as JPEG. When `aspect` is given the image is also center-cropped
+ * to that ratio automatically — the picker never opens a manual crop screen.
  */
 async function withPreparedImage<T>(
     uri: string,
     send: (body: ArrayBuffer, contentType: string, extension: string) => Promise<T>,
+    aspect?: number,
 ): Promise<T> {
-    const prepared = await prepareImageForUpload(uri);
+    let sourceUri = uri;
+    if (aspect) {
+        const cropped = await autoCropImage(uri, aspect);
+        sourceUri = cropped.uri;
+    }
+    const prepared = await prepareImageForUpload(sourceUri);
     try {
         return await send(await readFileAsArrayBuffer(prepared.uri), prepared.mimeType, prepared.extension);
     } catch (error) {
         if (prepared.mimeType !== 'image/webp' || !isMimeTypeRejected(error)) throw error;
         console.warn('Storage rejected WebP; retrying as JPEG. Apply the 20260923 storage migration.');
-        const jpeg = await prepareImageForUpload(uri, undefined, { format: 'jpeg' });
+        const jpeg = await prepareImageForUpload(sourceUri, undefined, { format: 'jpeg' });
         return send(await readFileAsArrayBuffer(jpeg.uri), jpeg.mimeType, jpeg.extension);
     }
 }
@@ -1238,11 +1245,12 @@ export const uploadStory = async (file: File | Blob | string | null, caption: st
         let contentType: string | undefined;
         try {
             const { bucket, filePath } = typeof file === 'string'
+                // Stories are 9:16: center-crop automatically, no manual editor.
                 ? await withPreparedImage(file, (bytes, type) => {
                     body = bytes;
                     contentType = type;
                     return uploadStoryMedia(bytes, user.id, type);
-                })
+                }, 9 / 16)
                 : await uploadStoryMedia(body, user.id, contentType);
             const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(filePath);
             if (!urlData) throw new Error("Could not get public URL for story.");
@@ -1540,7 +1548,8 @@ export const uploadAvatar = async (file: File | Blob | string): Promise<string |
     let publicUrl: string;
     try {
         publicUrl = typeof file === 'string'
-            ? await withPreparedImage(file, (bytes, type) => send(bytes, type))
+            // Avatars are square: center-crop automatically, no manual editor.
+            ? await withPreparedImage(file, (bytes, type) => send(bytes, type), 1)
             : await send(file, file.type || undefined);
     } catch (error) {
         console.error('Avatar upload error:', error);

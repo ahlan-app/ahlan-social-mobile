@@ -114,10 +114,10 @@ export default function CameraScreen() {
   }, [capturing, triggerHapticFeedback, handleUploadStory, router, addToast]);
 
   const pickFromGallery = useCallback(async () => {
+    // No manual crop screen: pick the image as-is.
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       quality: 0.9,
-      allowsEditing: true,
     });
 
     if (!result.canceled && result.assets[0]?.uri) {

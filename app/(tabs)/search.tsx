@@ -23,11 +23,12 @@ import {
   RefreshControl,
   ActivityIndicator,
   Dimensions,
+  Keyboard,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApp } from '../../store/AppContext.native';
 import {
   getTrendingPosts,
@@ -156,6 +157,7 @@ const ExploreTile: React.FC<{ post: Post; onPress: () => void }> = React.memo(({
 
 export default function SearchScreen() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { isUserBlocked, isUserIdBlocked, refreshBlockRelations } = useApp();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -272,6 +274,19 @@ export default function SearchScreen() {
     router.push(`/post/${post.id}`);
   }, []);
 
+  // Leaving the search UI while the keyboard is up crashes on some Android
+  // builds (the focused TextInput is unmounted mid-dismiss). Dismiss the
+  // keyboard first, then clear the search state in one go.
+  const handleCancel = useCallback(() => {
+    Keyboard.dismiss();
+    setIsSearching(false);
+    setSearchTerm('');
+    setDebouncedTerm('');
+    // Drop cached search results too: after visiting a profile and coming
+    // back, stale keepPreviousData rows racing the remount crashed the list.
+    queryClient.removeQueries({ queryKey: queryKeys.userSearch('') });
+  }, [queryClient]);
+
   // ─── Render search results ─────────────────────
 
   const renderSearchContent = () => {
@@ -375,7 +390,7 @@ export default function SearchScreen() {
             returnKeyType="search"
           />
           {isSearching && (
-            <Pressable onPress={() => { setIsSearching(false); setSearchTerm(''); }}>
+            <Pressable onPress={handleCancel}>
               <Text className="text-blue-400 font-semibold ml-2">Cancel</Text>
             </Pressable>
           )}

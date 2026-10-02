@@ -158,11 +158,11 @@ export default function StoryCreateScreen() {
   }, [capturing, triggerHapticFeedback, addToast]);
 
   const pickFromGallery = useCallback(async () => {
+    // No manual crop screen: the picker returns the image as-is and the
+    // story pipeline center-crops it to 9:16 automatically on upload.
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       quality: 0.9,
-      allowsEditing: true,
-      aspect: [9, 16],
     });
 
     if (!result.canceled && result.assets[0]?.uri) {

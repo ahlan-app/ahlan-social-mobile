@@ -59,6 +59,35 @@ export function targetWidth(sourceWidth: number, maxWidth: number = MAX_IMAGE_WI
   return sourceWidth > maxWidth ? maxWidth : null;
 }
 
+/**
+ * Centered crop rectangle for a target aspect ratio (width / height, e.g.
+ * 9 / 16 or 1). Returns null when the source already matches the ratio (within
+ * half a percent), so no pixels are thrown away unnecessarily.
+ */
+export function centerCropRect(
+  sourceWidth: number,
+  sourceHeight: number,
+  aspect: number,
+): { originX: number; originY: number; width: number; height: number } | null {
+  if (!Number.isFinite(sourceWidth) || !Number.isFinite(sourceHeight)) return null;
+  if (sourceWidth <= 0 || sourceHeight <= 0 || !Number.isFinite(aspect) || aspect <= 0) return null;
+
+  const sourceAspect = sourceWidth / sourceHeight;
+  // Already the requested ratio (within 0.5%): no crop needed.
+  if (Math.abs(sourceAspect - aspect) / aspect < 0.005) return null;
+
+  // Crop the longer dimension down, keeping the center.
+  const cropW = sourceAspect > aspect ? Math.round(sourceHeight * aspect) : sourceWidth;
+  const cropH = sourceAspect > aspect ? sourceHeight : Math.round(sourceWidth / aspect);
+
+  return {
+    originX: Math.floor((sourceWidth - cropW) / 2),
+    originY: Math.floor((sourceHeight - cropH) / 2),
+    width: cropW,
+    height: cropH,
+  };
+}
+
 /** Best-effort MIME type and extension from a file URI. */
 export function guessMediaType(uri: string): { mimeType: string; extension: string } {
   const lower = uri.toLowerCase().split(/[?#]/)[0];
@@ -98,6 +127,64 @@ async function render(uri: string, format: 'webp' | 'jpeg'): Promise<PreparedIma
       } catch {
         // already released
       }
+    }
+  }
+}
+
+/**
+ * Center-crops a local image to `aspect` (width / height) without any manual
+ * editing UI — the picker must never open the interactive crop screen. When
+ * the source already matches the ratio the image is returned as-is. On any
+ * failure the original URI is returned so the flow still completes.
+ */
+export async function autoCropImage(
+  uri: string,
+  aspect: number,
+  opts: { format?: 'webp' | 'jpeg' } = {},
+): Promise<PreparedImage> {
+  const context = loadManipulator().ImageManipulator.manipulate(uri);
+  let original: ImageRef | null = null;
+  try {
+    original = await context.renderAsync();
+    const rect = centerCropRect(original.width, original.height, aspect);
+    if (!rect) {
+      // No crop needed — still normalize the output type for downstream code.
+      return { uri, mimeType: guessMediaType(uri).mimeType, extension: guessMediaType(uri).extension };
+    }
+    context.crop(rect);
+    const cropped = await context.renderAsync();
+    try {
+      const saved = await cropped.saveAsync({
+        compress: IMAGE_QUALITY,
+        format: (opts.format ?? 'webp') as SaveFormat,
+      });
+      return {
+        uri: saved.uri,
+        width: saved.width,
+        height: saved.height,
+        mimeType: (opts.format ?? 'webp') === 'webp' ? 'image/webp' : 'image/jpeg',
+        extension: (opts.format ?? 'webp') === 'webp' ? 'webp' : 'jpg',
+      };
+    } finally {
+      try {
+        cropped.release();
+      } catch {
+        // already released
+      }
+    }
+  } catch (error) {
+    console.warn('Auto crop failed, using the original image.', error);
+    return { uri, ...guessMediaType(uri) };
+  } finally {
+    try {
+      original?.release();
+    } catch {
+      // already released
+    }
+    try {
+      context.release();
+    } catch {
+      // already released
     }
   }
 }
