@@ -145,14 +145,6 @@ export default function LoginScreen() {
             </View>
           </View>
 
-          <View className="items-center mt-4">
-            <Link href="/(auth)/forgot-password" asChild>
-              <Pressable>
-                <Text className="text-blue-500 font-semibold">Forgot password?</Text>
-              </Pressable>
-            </Link>
-          </View>
-
           <View className="pb-8 items-center">
             <Text className="text-gray-400">
               Don't have an account?{' '}

@@ -27,7 +27,6 @@ export default function EditProfileScreen() {
   const { userProfile, updateProfile, addToast } = useApp();
 
   const [name, setName] = useState(userProfile?.name ?? '');
-  const [username, setUsername] = useState(userProfile?.username ?? '');
   const [bio, setBio] = useState(userProfile?.bio ?? '');
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -51,10 +50,11 @@ export default function EditProfileScreen() {
 
     const originalProfile = userProfile ? { ...userProfile } : null;
 
-    // Optimistic update — apply locally and navigate back immediately
+    // Optimistic update — apply locally and navigate back immediately.
+    // Username is intentionally NOT editable: usernames are permanent
+    // identifiers (customers reported duplicate/conflicting usernames).
     updateProfile({
       name,
-      username,
       bio: cleanHtml(bio),
       ...(avatarUri ? { profilePicture: avatarUri } : {}),
     });
@@ -76,14 +76,12 @@ export default function EditProfileScreen() {
 
       const hasTextChanges =
         name !== originalProfile?.name ||
-        username !== originalProfile?.username ||
         bio !== (originalProfile?.bio ?? '');
 
       if (hasTextChanges) {
         promises.push(
           updateUserProfileData({
             name,
-            username,
             bio,
           })
         );
@@ -96,7 +94,7 @@ export default function EditProfileScreen() {
         throw new Error('One or more updates failed');
       }
       // Posts, comments and profile screens show my name/username/avatar.
-      void invalidateAfterProfileChange(originalProfile?.id, [originalProfile?.username, username]);
+      void invalidateAfterProfileChange(originalProfile?.id, [originalProfile?.username]);
     } catch {
       // Revert to original profile on failure
       if (originalProfile) {
@@ -165,22 +163,11 @@ export default function EditProfileScreen() {
                 />
               </View>
 
-              {/* Username */}
+              {/* Username (read-only) — usernames are permanent */}
               <View>
                 <Text className="text-gray-400 text-sm mb-1.5">Username</Text>
-                <View className="flex-row items-center bg-gray-800 rounded-lg border border-gray-700">
-                  <View className="pl-4 pr-1 py-3">
-                    <Text className="text-gray-400 text-base">@</Text>
-                  </View>
-                  <TextInput
-                    value={username}
-                    onChangeText={setUsername}
-                    placeholder="username"
-                    placeholderTextColor="#6b7280"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    className="flex-1 text-white px-2 py-3 text-base"
-                  />
+                <View className="bg-gray-800/50 rounded-lg px-4 py-3 border border-gray-700">
+                  <Text className="text-gray-500 text-base">@{userProfile?.username}</Text>
                 </View>
               </View>
 

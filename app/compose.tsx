@@ -30,7 +30,6 @@ import { Image } from 'expo-image';
 import { useApp } from '../store/AppContext.native';
 import { cleanHtml } from '../services/apiService';
 import UserAvatar from '../components/native/UserAvatar';
-import { PollIcon, XIcon } from '../components/native/Icons';
 import type { Post } from '../types';
 
 const MAX_CHARS = 280;
@@ -46,16 +45,12 @@ export default function ComposeScreen() {
 
   const [content, setContent] = useState('');
   const [isPosting, setIsPosting] = useState(false);
-  const [isCreatingPoll, setIsCreatingPoll] = useState(false);
-  const [pollQuestion, setPollQuestion] = useState('');
-  const [pollOptions, setPollOptions] = useState(['', '']);
 
   const charCount = content.length;
   const canPost =
     (content.trim().length > 0 || mediaUri) &&
     !isPosting &&
-    charCount <= MAX_CHARS &&
-    (!isCreatingPoll || (pollQuestion.trim() && pollOptions.filter(o => o.trim()).length >= 2));
+    charCount <= MAX_CHARS;
 
   const handlePost = async () => {
     if (!canPost || !userProfile) return;
@@ -77,14 +72,6 @@ export default function ComposeScreen() {
         reposts: 0,
         replies: 0,
         isVerified: userProfile.isVerified || false,
-        poll: isCreatingPoll
-          ? {
-              question: pollQuestion.trim(),
-              options: pollOptions
-                .filter(o => o.trim())
-                .map(o => ({ text: o.trim(), votes: 0 })),
-            }
-          : undefined,
       };
 
       await addProfilePost(newPost);
@@ -95,24 +82,6 @@ export default function ComposeScreen() {
     } finally {
       setIsPosting(false);
     }
-  };
-
-  const addPollOption = () => {
-    if (pollOptions.length < 4) {
-      setPollOptions([...pollOptions, '']);
-    }
-  };
-
-  const removePollOption = (index: number) => {
-    if (pollOptions.length > 2) {
-      setPollOptions(pollOptions.filter((_, i) => i !== index));
-    }
-  };
-
-  const updatePollOption = (index: number, value: string) => {
-    const updated = [...pollOptions];
-    updated[index] = value;
-    setPollOptions(updated);
   };
 
   const charProgress = Math.min(charCount / MAX_CHARS, 1);
@@ -182,63 +151,11 @@ export default function ComposeScreen() {
               </View>
             </View>
           )}
-
-          {/* Poll section */}
-          {isCreatingPoll && (
-            <View className="mx-4 mb-4 border border-gray-800 rounded-2xl p-4">
-              <View className="flex-row justify-between items-center mb-3">
-                <Text className="text-white font-bold text-base">Poll</Text>
-                <Pressable onPress={() => setIsCreatingPoll(false)}>
-                  <XIcon color="#6b7280" size={20} />
-                </Pressable>
-              </View>
-
-              <TextInput
-                value={pollQuestion}
-                onChangeText={setPollQuestion}
-                placeholder="Ask a question..."
-                placeholderTextColor="#6b7280"
-                className="text-white text-base border-b border-gray-800 pb-3 mb-3"
-              />
-
-              {pollOptions.map((option, index) => (
-                <View key={index} className="flex-row items-center mb-2" style={{ gap: 8 }}>
-                  <TextInput
-                    value={option}
-                    onChangeText={(val) => updatePollOption(index, val)}
-                    placeholder={`Option ${index + 1}`}
-                    placeholderTextColor="#6b7280"
-                    className="flex-1 text-white bg-gray-800 rounded-xl px-4 py-2.5"
-                  />
-                  {pollOptions.length > 2 && (
-                    <Pressable onPress={() => removePollOption(index)}>
-                      <XIcon color="#6b7280" size={18} />
-                    </Pressable>
-                  )}
-                </View>
-              ))}
-
-              {pollOptions.length < 4 && (
-                <Pressable onPress={addPollOption} className="mt-2">
-                  <Text className="text-blue-500 font-semibold">+ Add option</Text>
-                </Pressable>
-              )}
-            </View>
-          )}
         </ScrollView>
 
-        {/* Toolbar */}
+        {/* Toolbar — poll creation removed per customer feedback */}
         <View className="border-t border-gray-900 px-4 py-2 flex-row items-center justify-between">
-          <View className="flex-row items-center" style={{ gap: 16 }}>
-            {!mediaUri && (
-              <Pressable
-                onPress={() => setIsCreatingPoll(!isCreatingPoll)}
-                className="p-2"
-              >
-                <PollIcon color={isCreatingPoll ? '#3b82f6' : '#6b7280'} size={22} />
-              </Pressable>
-            )}
-          </View>
+          <View className="flex-row items-center" style={{ gap: 16 }} />
 
           {/* Character counter */}
           {charCount > 0 && (

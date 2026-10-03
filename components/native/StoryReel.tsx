@@ -40,8 +40,8 @@ const StoryCircle: React.FC<{
   onPress: () => void;
   isViewed: boolean;
 }> = React.memo(({ username, avatar, onPress, isViewed }) => (
-  // Viewed stories get the blue ring; unwatched stay gray
-  <StoryBubble label={`@${username}`} active={isViewed} onPress={onPress}>
+  // Unwatched stories get the blue ring; already-viewed stay gray
+  <StoryBubble label={`@${username}`} active={!isViewed} onPress={onPress}>
     <UserAvatar username={username} avatarUrl={avatar} size={STORY_INNER_SIZE} />
   </StoryBubble>
 ));

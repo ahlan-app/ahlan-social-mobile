@@ -1203,20 +1203,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const userId = state.userProfile.id;
         if (!userId || state.unreadMessageCount === 0) return;
 
-        // Optimistic update
-        // FIX: Explicitly type prev as AppState.
-        setState((prev: AppState) => ({ ...prev, unreadMessageCount: 0, unreadChats: new Set() }));
-
-        const { error } = await supabase
-            .from("messages")
-            .update({ seen: true })
-            .eq("receiver_id", userId)
-            .eq("seen", false);
-
-        if (error) {
-            console.error("Error marking all messages as read:", error.message || error);
-        } else {
-        }
+        // Clear the tab badge locally, but do NOT mark messages as seen in
+        // the database here: the chat LIST must keep its blue unread dots
+        // so the user can see who messaged them. Rows are marked seen only
+        // when the corresponding chat is actually opened (markChatAsRead).
+        setState((prev: AppState) => ({ ...prev, unreadMessageCount: 0 }));
     }, [state.userProfile.id, state.unreadMessageCount]);
 
     const markChatAsRead = useCallback(async (senderId: string) => {

@@ -81,9 +81,6 @@ export default function StoryViewerScreen() {
   const [isPaused, setIsPaused] = useState(false);
 
   const progressAnim = useRef(new Animated.Value(0)).current;
-  const translateX = useRef(new Animated.Value(0)).current;
-  const translateY = useRef(new Animated.Value(0)).current;
-  const opacityAnim = useRef(new Animated.Value(1)).current;
   const timerRef = useRef<Animated.CompositeAnimation | null>(null);
 
   const currentStory = stories[currentIndex];
@@ -191,13 +188,12 @@ export default function StoryViewerScreen() {
     return () => timerRef.current?.stop();
   }, [currentIndex, isPaused, startTimer, loading]);
 
+  // Close: navigate back immediately. The old fade/translate animation
+  // exposed the white fullScreenModal background behind the story view
+  // (the "white screen" bug on X press and swipes).
   const handleClose = useCallback(() => {
-    Animated.timing(opacityAnim, {
-      toValue: 0,
-      duration: 200,
-      useNativeDriver: true,
-    }).start(() => router.back());
-  }, [router, opacityAnim]);
+    router.back();
+  }, [router]);
 
   // Tap zones
   const handleTap = useCallback(
@@ -216,14 +212,9 @@ export default function StoryViewerScreen() {
     [goPrev, goNext],
   );
 
-  const resetPosition = useCallback(() => {
-    Animated.parallel([
-      Animated.spring(translateX, { toValue: 0, useNativeDriver: true }),
-      Animated.spring(translateY, { toValue: 0, useNativeDriver: true }),
-    ]).start();
-  }, [translateX, translateY]);
-
-  // Pan gesture
+  // Pan gesture — taps and swipes only, no positional dragging: dragging
+  // the content sideways exposed the white modal background (white screen
+  // bug). Left/right swipe = prev/next, down swipe = close.
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -232,20 +223,12 @@ export default function StoryViewerScreen() {
       onPanResponderGrant: () => {
         setIsPaused(true);
       },
-      onPanResponderMove: (_, gs) => {
-        if (Math.abs(gs.dy) > Math.abs(gs.dx)) {
-          translateY.setValue(gs.dy);
-        } else {
-          translateX.setValue(gs.dx);
-        }
-      },
       onPanResponderRelease: (evt, gs) => {
         const moved = Math.abs(gs.dx) > 10 || Math.abs(gs.dy) > 10;
 
         if (!moved) {
           handleTap(evt.nativeEvent.pageX);
           setIsPaused(false);
-          resetPosition();
           return;
         }
 
@@ -260,11 +243,9 @@ export default function StoryViewerScreen() {
         }
 
         setIsPaused(false);
-        resetPosition();
       },
       onPanResponderTerminate: () => {
         setIsPaused(false);
-        resetPosition();
       },
     }),
   ).current;
@@ -325,14 +306,7 @@ export default function StoryViewerScreen() {
   const isTextStory = !currentStory.imageUrl;
 
   return (
-    <Animated.View
-      style={{
-        flex: 1,
-        backgroundColor: '#000',
-        opacity: opacityAnim,
-        transform: [{ translateX }, { translateY }],
-      }}
-    >
+    <View style={{ flex: 1, backgroundColor: '#000' }}>
       <Stack.Screen options={{ headerShown: false, presentation: 'fullScreenModal' }} />
 
       <View style={{ flex: 1 }} {...panResponder.panHandlers}>
@@ -353,6 +327,28 @@ export default function StoryViewerScreen() {
             contentFit="cover"
             transition={200}
           />
+        )}
+
+        {/* Caption overlay for image stories — image + text stories previously
+            dropped the caption entirely. */}
+        {!isTextStory && currentStory.content && (
+          <View
+            style={{
+              position: 'absolute',
+              top: 140,
+              left: 0,
+              right: 0,
+              paddingHorizontal: 24,
+            }}
+            pointerEvents="none"
+          >
+            <Text
+              className="text-white text-xl font-bold"
+              style={{ textShadowColor: 'rgba(0,0,0,0.75)', textShadowRadius: 8, textAlign: 'center' }}
+            >
+              {currentStory.content}
+            </Text>
+          </View>
         )}
 
         {/* Top gradient */}
@@ -501,6 +497,6 @@ export default function StoryViewerScreen() {
           </KeyboardAvoidingView>
         </SafeAreaView>
       </View>
-    </Animated.View>
+    </View>
   );
 }

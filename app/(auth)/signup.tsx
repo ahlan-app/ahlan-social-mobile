@@ -315,8 +315,22 @@ export default function SignupScreen() {
                 </View>
               ) : null}
 
-              <Text className="text-gray-500 text-xs text-center mt-2">
-                By creating an account you agree to the terms of service and privacy policy.
+              <Text className="text-gray-500 text-sm text-center leading-6">
+                By creating an account you agree to our{' '}
+                <Text
+                  className="text-blue-500 font-semibold"
+                  onPress={() => router.push('/terms')}
+                >
+                  Terms of Service
+                </Text>{' '}
+                and{' '}
+                <Text
+                  className="text-blue-500 font-semibold"
+                  onPress={() => router.push('/privacy-policy')}
+                >
+                  Privacy Policy
+                </Text>
+                .
               </Text>
 
               <Pressable
