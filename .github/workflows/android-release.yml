@@ -160,7 +160,10 @@ jobs:
           # 1) Signed, not with the debug key, and with the expected certificate.
           "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" | tee apk-certs.txt
           jarsigner -verify "$AAB" | tail -n 1
-          APK_SHA=$(awk -F': ' '/Signer #1 certificate SHA-256 digest/{print $2}' apk-certs.txt)
+          # apksigner output formats differ by version ("Signer #1 certificate
+          # SHA-256 digest:" vs "V2 Signer: certificate SHA-256 digest:"). Match
+          # the "certificate SHA-256 digest" line regardless of the signer prefix.
+          APK_SHA=$(awk -F': ' '/certificate SHA-256 digest/{print $2; exit}' apk-certs.txt | tr -d ':' | tr 'A-F' 'a-f')
           AAB_SHA=$(keytool -printcert -jarfile "$AAB" | awk '/SHA256:/{print $2}' | tr -d ':' | tr 'A-F' 'a-f')
           if grep -q "CN=Android Debug" apk-certs.txt || keytool -printcert -jarfile "$AAB" | grep -q "CN=Android Debug"; then
             echo "::error::Release artifacts are signed with the debug key"; exit 1
