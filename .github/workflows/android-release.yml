@@ -161,9 +161,10 @@ jobs:
           "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" | tee apk-certs.txt
           jarsigner -verify "$AAB" | tail -n 1
           # apksigner output formats differ by version ("Signer #1 certificate
-          # SHA-256 digest:" vs "V2 Signer: certificate SHA-256 digest:"). Match
-          # the "certificate SHA-256 digest" line regardless of the signer prefix.
-          APK_SHA=$(awk -F': ' '/certificate SHA-256 digest/{print $2; exit}' apk-certs.txt | tr -d ':' | tr 'A-F' 'a-f')
+          # SHA-256 digest:" vs "V2 Signer: certificate SHA-256 digest:"), and
+          # the digest sits in a different awk field in each. Extract the only
+          # 64-char hex string in the output instead (SHA-1 is 40, MD5 is 32).
+          APK_SHA=$(grep -oE '\b[0-9a-fA-F]{64}\b' apk-certs.txt | head -1 | tr 'A-F' 'a-f')
           AAB_SHA=$(keytool -printcert -jarfile "$AAB" | awk '/SHA256:/{print $2}' | tr -d ':' | tr 'A-F' 'a-f')
           if grep -q "CN=Android Debug" apk-certs.txt || keytool -printcert -jarfile "$AAB" | grep -q "CN=Android Debug"; then
             echo "::error::Release artifacts are signed with the debug key"; exit 1
